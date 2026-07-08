@@ -189,15 +189,39 @@ func TestStart_MissingFile(t *testing.T) {
 	assert.ErrorContains(t, err, "initial load failed")
 }
 
-func TestStart_InvalidIP(t *testing.T) {
+func TestStart_EmptyAddress(t *testing.T) {
 	path := writeTemp(t, `
 endpoints:
   - name: ep1
-    address: "not-an-ip"
+    address: ""
     port: "8000"
 `)
 	err := newFD(path, false).Start(context.Background(), &recordingNotifier{})
-	assert.ErrorContains(t, err, "invalid IPv4 address")
+	assert.ErrorContains(t, err, "is not a valid IPv4 or hostname")
+}
+
+func TestStart_InvalidAddressFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+	}{
+		{"spaces", "not a valid host"},
+		{"special chars", "!!!garbage!!!"},
+		{"trailing dot label", "host-.example.com"},
+		{"leading hyphen", "-host.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTemp(t, fmt.Sprintf(`
+endpoints:
+  - name: ep1
+    address: %q
+    port: "8000"
+`, tt.address))
+			err := newFD(path, false).Start(context.Background(), &recordingNotifier{})
+			assert.ErrorContains(t, err, "is not a valid IPv4 or hostname")
+		})
+	}
 }
 
 func TestStart_RejectsIPv6(t *testing.T) {
@@ -208,7 +232,125 @@ endpoints:
     port: "8000"
 `)
 	err := newFD(path, false).Start(context.Background(), &recordingNotifier{})
-	assert.ErrorContains(t, err, "invalid IPv4 address")
+	assert.ErrorContains(t, err, "is not a valid IPv4 or hostname")
+}
+
+func TestStart_HostnameAddress(t *testing.T) {
+	path := writeTemp(t, `
+endpoints:
+  - name: cluster-us-east
+    namespace: clusters
+    address: "spoke-us-east.example.com"
+    port: "443"
+    labels:
+      region: us-east
+      model: llama-7b
+  - name: cluster-eu-west
+    namespace: clusters
+    address: "spoke-eu-west.example.com"
+    port: "443"
+    labels:
+      region: eu-west
+      model: llama-7b
+`)
+	notifier := &recordingNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.NoError(t, newFD(path, false).Start(ctx, notifier))
+	require.Len(t, notifier.upserted, 2)
+
+	for _, m := range notifier.upserted {
+		assert.Empty(t, m.PodName, "hostname address should produce empty PodName")
+	}
+	assert.Equal(t, "spoke-us-east.example.com:443", notifier.upserted[0].MetricsHost)
+	assert.Equal(t, "spoke-eu-west.example.com:443", notifier.upserted[1].MetricsHost)
+	assert.ElementsMatch(t, []string{"clusters/cluster-us-east", "clusters/cluster-eu-west"}, notifier.upsertedNames())
+}
+
+func TestStart_IPv4PodNameIsSet(t *testing.T) {
+	path := writeTemp(t, `
+endpoints:
+  - name: vllm-pod-1
+    address: "10.0.0.5"
+    port: "8000"
+`)
+	notifier := &recordingNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.NoError(t, newFD(path, false).Start(ctx, notifier))
+	require.Len(t, notifier.upserted, 1)
+	assert.Equal(t, "vllm-pod-1", notifier.upserted[0].PodName, "IPv4 address should preserve PodName")
+	assert.Equal(t, "10.0.0.5:8000", notifier.upserted[0].MetricsHost)
+}
+
+func TestStart_MixedIPv4AndHostname(t *testing.T) {
+	path := writeTemp(t, `
+endpoints:
+  - name: vllm-pod-1
+    address: "10.0.0.5"
+    port: "8000"
+  - name: cluster-us-east
+    address: "spoke-us-east.example.com"
+    port: "443"
+`)
+	notifier := &recordingNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.NoError(t, newFD(path, false).Start(ctx, notifier))
+	require.Len(t, notifier.upserted, 2)
+
+	var pod, cluster *fwkdl.EndpointMetadata
+	for _, m := range notifier.upserted {
+		if m.NamespacedName.Name == "vllm-pod-1" {
+			pod = m
+		} else {
+			cluster = m
+		}
+	}
+	require.NotNil(t, pod)
+	require.NotNil(t, cluster)
+	assert.Equal(t, "vllm-pod-1", pod.PodName, "IPv4 endpoint should have PodName set")
+	assert.Empty(t, cluster.PodName, "hostname endpoint should have empty PodName")
+}
+
+func TestStart_MetricsPortOverride(t *testing.T) {
+	path := writeTemp(t, `
+endpoints:
+  - name: cluster-us-east
+    address: "spoke-gateway.example.com"
+    port: "443"
+    metricsPort: "9090"
+`)
+	notifier := &recordingNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.NoError(t, newFD(path, false).Start(ctx, notifier))
+	require.Len(t, notifier.upserted, 1)
+
+	m := notifier.upserted[0]
+	assert.Equal(t, "spoke-gateway.example.com", m.Address, "Address should be unchanged")
+	assert.Equal(t, "443", m.Port, "Port should be unchanged")
+	assert.Equal(t, "spoke-gateway.example.com:9090", m.MetricsHost, "MetricsHost should use address with metricsPort")
+}
+
+func TestStart_MetricsFieldsNotSetFallsBack(t *testing.T) {
+	path := writeTemp(t, `
+endpoints:
+  - name: ep1
+    address: "10.0.0.1"
+    port: "8000"
+`)
+	notifier := &recordingNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.NoError(t, newFD(path, false).Start(ctx, notifier))
+	require.Len(t, notifier.upserted, 1)
+	assert.Equal(t, "10.0.0.1:8000", notifier.upserted[0].MetricsHost, "MetricsHost should fall back to Address:Port")
 }
 
 func TestStart_InvalidPort(t *testing.T) {
