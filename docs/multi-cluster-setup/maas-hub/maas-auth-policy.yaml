@@ -1,0 +1,15 @@
+# MaaSAuthPolicy - defines which tenants can access the model
+# Each tenant is identified by their Service Account
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: tenant-access
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-model
+      namespace: models-as-a-service
+  subjects:
+    # Tenant Service Accounts (one per tenant cluster)
+    users:
+      - "system:serviceaccount:tenants:tenant-consumer-sa"

@@ -1,0 +1,32 @@
+# Cluster credentials and secrets - NEVER commit these
+CLUSTERS.md
+pull-secret.json
+*/auth/
+**/kubeconfig
+**/kubeadmin-password
+**/*.key
+**/*.crt
+
+# OpenShift installer generated files
+**/.openshift_install*
+**/.clusterapi_output/
+**/terraform.*.json
+**/metadata.json
+
+# Logs
+**/*.log
+
+# Backup files
+**/*.backup
+**/*.old
+
+# Keep only the necessary config files
+!*/deployments/*.yaml
+!*/demo/*.sh
+!*/demo/*.py
+!*/demo/*.html
+!maas-test/*.yaml
+!maas-test/*.sh
+!hub-tls/*.yaml
+!*.md
+!*.sh

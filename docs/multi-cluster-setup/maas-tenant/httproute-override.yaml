@@ -1,0 +1,44 @@
+# HTTPRoute override for Tenant's ExternalModel
+# MaaS controller creates a basic HTTPRoute, but we need to:
+# 1. Rewrite path from tenant model name to Hub model name
+# 2. Inject Hub API key in Authorization header
+# 
+# The Hub API key is stored in hub-tenant-sa-token secret
+# Apply AFTER MaaS reconciles the ExternalModel
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hub-multicluster-model
+  namespace: models-as-a-service
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: maas-default-gateway
+    namespace: openshift-ingress
+  rules:
+  - backendRefs:
+    - group: ""
+      kind: Service
+      name: hub-multicluster-model
+      port: 443
+      weight: 1
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /models-as-a-service/hub-inference-model
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        set:
+        - name: Host
+          value: maas.apps.aigrid-hub.aigriddev.sysdeseng.com
+        - name: Authorization
+          value: "Bearer <HUB_API_KEY>"  # Replace with actual key from hub-tenant-sa-token
+    matches:
+    - path:
+        type: PathPrefix
+        value: /models-as-a-service/hub-multicluster-model
+    timeouts:
+      request: 300s

@@ -1,0 +1,12 @@
+# ServiceAccount for Hub cluster to authenticate to Spoke
+# The Hub will use this SA's token to authenticate requests
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hub-consumers
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hub-consumer-sa
+  namespace: hub-consumers

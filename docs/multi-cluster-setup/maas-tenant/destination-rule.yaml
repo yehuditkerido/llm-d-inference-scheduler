@@ -1,0 +1,14 @@
+# DestinationRule for TLS to Hub MaaS
+# insecureSkipVerify is needed because the ingress CA cert
+# may not be fully trusted in cross-cluster scenarios
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: hub-multicluster-model
+  namespace: models-as-a-service
+spec:
+  host: maas.apps.aigrid-hub.aigriddev.sysdeseng.com
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      insecureSkipVerify: true

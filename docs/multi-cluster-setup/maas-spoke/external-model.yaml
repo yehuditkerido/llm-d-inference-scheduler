@@ -1,0 +1,13 @@
+# ExternalModel wrapping the local Envoy/EPP endpoint on the Spoke
+# This allows MaaS to protect and validate requests to the local inference stack
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: spoke-inference-model
+  namespace: models-as-a-service
+spec:
+  provider: internal
+  targetModel: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  endpoint: envoy.llm-d-system.svc.cluster.local
+  credentialRef:
+    name: dummy-credentials

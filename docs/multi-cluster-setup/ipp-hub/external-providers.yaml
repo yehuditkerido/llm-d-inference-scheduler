@@ -1,0 +1,41 @@
+# ExternalProvider CRs for Hub IPP to inject credentials when routing to Spokes
+# Each provider defines a Spoke's MaaS endpoint and credentials reference
+---
+apiVersion: inference.llm-d.ai/v1alpha1
+kind: ExternalProvider
+metadata:
+  name: spoke1-provider
+  namespace: llm-d-system
+spec:
+  provider: "spoke1"
+  endpoint: "maas.apps.aigrid-tenant1.aigriddev.sysdeseng.com"
+  auth:
+    type: simple
+    secretRef:
+      name: spoke1-maas-credentials
+---
+apiVersion: inference.llm-d.ai/v1alpha1
+kind: ExternalProvider
+metadata:
+  name: spoke2-provider
+  namespace: llm-d-system
+spec:
+  provider: "spoke2"
+  endpoint: "maas.apps.aigrid-tenant2.aigriddev.sysdeseng.com"
+  auth:
+    type: simple
+    secretRef:
+      name: spoke2-maas-credentials
+---
+apiVersion: inference.llm-d.ai/v1alpha1
+kind: ExternalProvider
+metadata:
+  name: spoke3-provider
+  namespace: llm-d-system
+spec:
+  provider: "spoke3"
+  endpoint: "maas.apps.aigrid-tenant3.aigriddev.sysdeseng.com"
+  auth:
+    type: simple
+    secretRef:
+      name: spoke3-maas-credentials

@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Hub cluster MaaS resources
+# Tenant-level authentication and rate limiting
+
+resources:
+  # Tenant Service Accounts (one per tenant cluster)
+  - tenant-service-accounts.yaml
+  
+  # Dummy credentials for ExternalModel
+  - dummy-credentials-secret.yaml
+  
+  # ExternalModel wrapping the existing Envoy/EPP endpoint
+  - external-model.yaml
+  
+  # Register model with MaaS
+  - maas-model-ref.yaml
+  
+  # Tenant authentication policy
+  - maas-auth-policy.yaml
+  
+  # Tenant subscriptions (rate limits per tenant cluster)
+  - maas-subscription.yaml
+
+# Apply these AFTER MaaS reconciles (manual step):
+# - reference-grant.yaml (in llm-d-system namespace)
+# - httproute-override.yaml (overrides MaaS-generated HTTPRoute)

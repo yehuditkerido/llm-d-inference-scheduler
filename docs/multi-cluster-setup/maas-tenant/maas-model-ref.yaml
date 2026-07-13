@@ -1,0 +1,11 @@
+# Register ExternalModel with MaaS
+# This enables MaaS authentication and rate limiting for the ExternalModel
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: hub-tinyllama
+  namespace: models-as-a-service
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: hub-multicluster-model

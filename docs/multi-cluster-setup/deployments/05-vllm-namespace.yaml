@@ -1,0 +1,8 @@
+# vLLM Inference Namespace
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-inference
+  labels:
+    app: vllm

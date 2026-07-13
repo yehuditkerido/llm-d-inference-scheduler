@@ -1,0 +1,24 @@
+# MaaS Subscriptions for Hub cluster
+# These define tenant-level rate limits (cluster quotas)
+# Each tenant "buys" a fixed quota from the Hub
+
+---
+# Tenant: aigrid-consumer cluster
+# This is the total quota for the entire tenant cluster
+# The tenant internally splits this among users/teams (their responsibility)
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: tenant-consumer-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-model
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 500       # 500 tokens/min (low for testing)
+          window: 1m       # In production: e.g., 100000 tokens/hour
+  owner:
+    users:
+      - "system:serviceaccount:tenants:tenant-consumer-sa"
+  priority: 0

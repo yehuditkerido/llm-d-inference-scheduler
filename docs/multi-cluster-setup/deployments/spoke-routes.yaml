@@ -1,0 +1,45 @@
+# OpenShift Routes for Spoke EPP
+# Creates routes for metrics and inference traffic
+# Deploy on: Spoke1 and Spoke2 (update hostname per cluster)
+---
+# Route for metrics (Hub EPP scrapes this)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: epp-metrics
+  namespace: llm-d-system
+  labels:
+    app: epp
+spec:
+  # UPDATE THIS per cluster:
+  # Spoke1: epp-metrics.apps.aigrid-tenant1.aigriddev.sysdeseng.com
+  # Spoke2: epp-metrics.apps.aigrid-tenant2.aigriddev.sysdeseng.com
+  host: epp-metrics.apps.CLUSTER_NAME.aigriddev.sysdeseng.com
+  port:
+    targetPort: metrics
+  to:
+    kind: Service
+    name: epp
+    weight: 100
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+# Alternative: Path-based route for single hostname
+# Uncomment this if you want /metrics and /v1/* on same hostname
+# apiVersion: route.openshift.io/v1
+# kind: Route
+# metadata:
+#   name: spoke-gateway-metrics
+#   namespace: llm-d-system
+# spec:
+#   host: spoke-gateway.apps.CLUSTER_NAME.aigriddev.sysdeseng.com
+#   path: /metrics
+#   port:
+#     targetPort: metrics
+#   to:
+#     kind: Service
+#     name: epp
+#   tls:
+#     termination: edge

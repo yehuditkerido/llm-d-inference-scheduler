@@ -1,0 +1,16 @@
+# ReferenceGrant allows HTTPRoute in models-as-a-service to reference
+# the Envoy service in llm-d-system namespace
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-maas-to-envoy
+  namespace: llm-d-system
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: models-as-a-service
+  to:
+  - group: ""
+    kind: Service
+    name: envoy

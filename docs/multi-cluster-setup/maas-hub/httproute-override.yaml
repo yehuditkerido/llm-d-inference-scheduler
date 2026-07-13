@@ -1,0 +1,37 @@
+# HTTPRoute override for Hub's ExternalModel
+# MaaS controller creates a basic HTTPRoute, but we need to:
+# 1. Point to internal Envoy service (port 8080)
+# 2. Add URL rewrite to strip model path prefix
+# 
+# Apply AFTER MaaS reconciles the ExternalModel
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hub-inference-model
+  namespace: models-as-a-service
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: maas-default-gateway
+    namespace: openshift-ingress
+  rules:
+  - backendRefs:
+    - group: ""
+      kind: Service
+      name: envoy
+      namespace: llm-d-system
+      port: 8080
+      weight: 1
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /
+    matches:
+    - path:
+        type: PathPrefix
+        value: /models-as-a-service/hub-inference-model
+    timeouts:
+      request: 300s

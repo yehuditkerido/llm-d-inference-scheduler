@@ -1,0 +1,16 @@
+# MaaSAuthPolicy - defines who can access the model
+# This grants access to all authenticated users
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: multicluster-access
+  namespace: models-as-a-service
+spec:
+  # Which model(s) this policy applies to
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+  # Who has access (OR logic - any match grants access)
+  subjects:
+    groups:
+      - name: system:authenticated  # All authenticated users
