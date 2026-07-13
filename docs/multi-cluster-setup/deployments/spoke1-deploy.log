@@ -1,0 +1,27 @@
+==========================================
+  GPU Operator + vLLM Deployment Script
+==========================================
+
+[1;33mUsing KUBECONFIG: /home/ykerido/Projects/llm-d-inference-scheduler/docs/multi-cluster-setup/spoke-tenant1/auth/kubeconfig[0m
+Cluster: https://api.aigrid-tenant1.aigriddev.sysdeseng.com:6443
+
+[1;33mStep 1: Installing Node Feature Discovery Operator...[0m
+namespace/openshift-nfd created
+operatorgroup.operators.coreos.com/openshift-nfd created
+subscription.operators.coreos.com/nfd created
+Waiting for NFD operator to be ready...
+Waiting for NFD CSV...
+  waiting...
+  waiting...
+[1;33mStep 2: Creating NFD Instance...[0m
+nodefeaturediscovery.nfd.openshift.io/nfd-instance created
+[1;33mStep 3: Installing NVIDIA GPU Operator...[0m
+namespace/nvidia-gpu-operator created
+operatorgroup.operators.coreos.com/nvidia-gpu-operator created
+subscription.operators.coreos.com/gpu-operator-certified created
+Waiting for GPU operator to be ready (this may take a few minutes)...
+Waiting for GPU Operator CSV...
+[1;33mStep 4: Creating GPU ClusterPolicy...[0m
+The ClusterPolicy "gpu-cluster-policy" is invalid: 
+* spec.daemonsets: Required value
+* spec.dcgm: Required value

@@ -1,0 +1,113 @@
+typemeta:
+  kind: ""
+  apiversion: ""
+objectmeta:
+  name: default
+  generatename: ""
+  namespace: ""
+  selflink: ""
+  uid: c31522e9-c29a-49b4-b008-a114b6a7d278
+  resourceversion: "355"
+  generation: 1
+  creationtimestamp: "2026-07-07T14:02:09+03:00"
+  deletiontimestamp: null
+  deletiongraceperiodseconds: null
+  labels:
+    clusterctl.cluster.x-k8s.io/move-hierarchy: ""
+  annotations: {}
+  ownerreferences: []
+  finalizers: []
+  managedfields:
+  - manager: openshift-install
+    operation: Update
+    apiversion: infrastructure.cluster.x-k8s.io/v1beta2
+    time: "2026-07-07T14:02:09+03:00"
+    fieldstype: FieldsV1
+    fieldsv1:
+      raw:
+      - 123
+      - 34
+      - 102
+      - 58
+      - 115
+      - 112
+      - 101
+      - 99
+      - 34
+      - 58
+      - 123
+      - 34
+      - 46
+      - 34
+      - 58
+      - 123
+      - 125
+      - 44
+      - 34
+      - 102
+      - 58
+      - 97
+      - 108
+      - 108
+      - 111
+      - 119
+      - 101
+      - 100
+      - 78
+      - 97
+      - 109
+      - 101
+      - 115
+      - 112
+      - 97
+      - 99
+      - 101
+      - 115
+      - 34
+      - 58
+      - 123
+      - 34
+      - 46
+      - 34
+      - 58
+      - 123
+      - 125
+      - 44
+      - 34
+      - 102
+      - 58
+      - 108
+      - 105
+      - 115
+      - 116
+      - 34
+      - 58
+      - 123
+      - 125
+      - 44
+      - 34
+      - 102
+      - 58
+      - 115
+      - 101
+      - 108
+      - 101
+      - 99
+      - 116
+      - 111
+      - 114
+      - 34
+      - 58
+      - 123
+      - 125
+      - 125
+      - 125
+      - 125
+    subresource: ""
+spec:
+  awsclusteridentityspec:
+    allowednamespaces:
+      namespacelist: []
+      selector:
+        matchlabels: {}
+        matchexpressions: []

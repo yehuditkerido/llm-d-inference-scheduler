@@ -1,0 +1,105 @@
+typemeta:
+  kind: ""
+  apiversion: ""
+objectmeta:
+  name: openshift-cluster-api-guests
+  generatename: ""
+  namespace: ""
+  selflink: ""
+  uid: e064ba97-6407-48b4-8e9a-a782ded34953
+  resourceversion: "354"
+  generation: 0
+  creationtimestamp: "2026-07-07T15:02:11+03:00"
+  deletiontimestamp: null
+  deletiongraceperiodseconds: null
+  labels:
+    kubernetes.io/metadata.name: openshift-cluster-api-guests
+  annotations: {}
+  ownerreferences: []
+  finalizers: []
+  managedfields:
+  - manager: openshift-install
+    operation: Update
+    apiversion: v1
+    time: "2026-07-07T15:02:11+03:00"
+    fieldstype: FieldsV1
+    fieldsv1:
+      raw:
+      - 123
+      - 34
+      - 102
+      - 58
+      - 109
+      - 101
+      - 116
+      - 97
+      - 100
+      - 97
+      - 116
+      - 97
+      - 34
+      - 58
+      - 123
+      - 34
+      - 102
+      - 58
+      - 108
+      - 97
+      - 98
+      - 101
+      - 108
+      - 115
+      - 34
+      - 58
+      - 123
+      - 34
+      - 46
+      - 34
+      - 58
+      - 123
+      - 125
+      - 44
+      - 34
+      - 102
+      - 58
+      - 107
+      - 117
+      - 98
+      - 101
+      - 114
+      - 110
+      - 101
+      - 116
+      - 101
+      - 115
+      - 46
+      - 105
+      - 111
+      - 47
+      - 109
+      - 101
+      - 116
+      - 97
+      - 100
+      - 97
+      - 116
+      - 97
+      - 46
+      - 110
+      - 97
+      - 109
+      - 101
+      - 34
+      - 58
+      - 123
+      - 125
+      - 125
+      - 125
+      - 125
+    subresource: ""
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active
+  conditions: []

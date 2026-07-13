@@ -1,0 +1,22 @@
+# Spoke EPP Configuration
+# Custom metrics-extractor config for newer vLLM versions (0.6+) that use
+# vllm:gpu_cache_usage_perc instead of vllm:kv_cache_usage_perc
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: epp-config
+  namespace: llm-d-system
+data:
+  config.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: EndpointPickerConfig
+    plugins:
+    - type: core-metrics-extractor
+      parameters:
+        engineConfigs:
+        - name: vllm
+          queuedRequestsSpec: "vllm:num_requests_waiting"
+          runningRequestsSpec: "vllm:num_requests_running"
+          kvUsageSpec: "vllm:gpu_cache_usage_perc"
+          loraSpec: "vllm:lora_info"
+          cacheInfoSpec: "vllm:prefix_cache_info"

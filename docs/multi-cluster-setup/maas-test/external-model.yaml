@@ -1,0 +1,11 @@
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: hub-multicluster-model
+  namespace: models-as-a-service
+spec:
+  provider: openai
+  endpoint: maas-hub.apps.aigrid-hub.aigriddev.sysdeseng.com
+  targetModel: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  credentialRef:
+    name: hub-gateway-credentials

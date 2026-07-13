@@ -1,0 +1,64 @@
+level=info msg=ipFamily is not specified in install-config; defaulting to "IPv4"
+level=info msg=Credentials loaded from the AWS config using "SharedConfigCredentials: /home/ykerido/.aws/credentials" provider
+level=info msg=Successfully populated MCS CA cert information: root-ca 2036-07-04T12:00:10Z 2026-07-07T12:00:10Z
+level=info msg=Successfully populated MCS TLS cert information: root-ca 2036-07-04T12:00:10Z 2026-07-07T12:00:10Z
+level=info msg=Consuming Install Config from target directory
+level=info msg=Adding clusters...
+level=info msg=Creating infrastructure resources...
+level=info msg=Reconciling IAM roles for control-plane and compute nodes
+level=info msg=Creating IAM role for master
+level=info msg=Creating IAM role for worker
+level=info msg=Started local control plane with envtest
+level=info msg=Stored kubeconfig for envtest in: /home/ykerido/Projects/llm-d-inference-scheduler/docs/multi-cluster-setup/spoke-tenant2/.clusterapi_output/envtest.kubeconfig
+level=info msg=Running process: Cluster API with args [-v=2 --diagnostics-address=0 --health-addr=127.0.0.1:37655 --webhook-port=44161 --webhook-cert-dir=/tmp/envtest-serving-certs-2076446365 --kubeconfig=/home/ykerido/Projects/llm-d-inference-scheduler/docs/multi-cluster-setup/spoke-tenant2/.clusterapi_output/envtest.kubeconfig]
+level=info msg=Running process: aws infrastructure provider with args [-v=4 --diagnostics-address=0 --health-addr=127.0.0.1:38091 --webhook-port=36217 --webhook-cert-dir=/tmp/envtest-serving-certs-934515299 --feature-gates=BootstrapFormatIgnition=true,ExternalResourceGC=true,TagUnmanagedNetworkResources=false,EKS=false,MachinePool=false --kubeconfig=/home/ykerido/Projects/llm-d-inference-scheduler/docs/multi-cluster-setup/spoke-tenant2/.clusterapi_output/envtest.kubeconfig]
+level=info msg=Creating infra manifests...
+level=info msg=Created manifest *v1.Namespace, namespace= name=openshift-cluster-api-guests
+level=info msg=Created manifest *v1beta2.AWSClusterControllerIdentity, namespace= name=default
+I0707 15:02:13.110414  411685 warning_handler.go:65] "cluster.x-k8s.io/v1beta1 Cluster is deprecated; use cluster.x-k8s.io/v1beta2 Cluster" logger="KubeAPIWarningLogger"
+level=info msg=Created manifest *v1beta1.Cluster, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd
+level=info msg=Created manifest *v1beta2.AWSCluster, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd
+level=info msg=Done creating infra manifests
+level=info msg=Creating kubeconfig entry for capi cluster aigrid-tenant2-sr2hd
+level=info msg=Waiting up to 15m0s (until 3:17PM IDT) for network infrastructure to become ready...
+level=info msg=Network infrastructure is ready
+level=info msg=Creating Route53 records for control plane load balancer
+level=info msg=Created private Hosted Zone
+level=info msg=Created manifest *v1beta2.AWSMachine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-bootstrap
+level=info msg=Created manifest *v1beta2.AWSMachine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master-0
+level=info msg=Created manifest *v1beta2.AWSMachine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master-1
+level=info msg=Created manifest *v1beta2.AWSMachine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master-2
+I0707 15:09:00.840710  411685 warning_handler.go:65] "cluster.x-k8s.io/v1beta1 Machine is deprecated; use cluster.x-k8s.io/v1beta2 Machine" logger="KubeAPIWarningLogger"
+level=info msg=Created manifest *v1beta1.Machine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-bootstrap
+level=info msg=Created manifest *v1beta1.Machine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master-0
+level=info msg=Created manifest *v1beta1.Machine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master-1
+level=info msg=Created manifest *v1beta1.Machine, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master-2
+level=info msg=Created manifest *v1.Secret, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-bootstrap
+level=info msg=Created manifest *v1.Secret, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-master
+level=info msg=Created manifest *v1.Secret, namespace=openshift-cluster-api-guests name=aigrid-tenant2-sr2hd-worker
+level=info msg=Waiting up to 15m0s (until 3:24PM IDT) for machines [aigrid-tenant2-sr2hd-bootstrap aigrid-tenant2-sr2hd-master-0 aigrid-tenant2-sr2hd-master-1 aigrid-tenant2-sr2hd-master-2] to provision...
+level=info msg=Control-plane machines are ready
+level=info msg=Cluster API resources have been created. Waiting for cluster to become ready...
+level=info msg=Waiting up to 20m0s (until 3:29PM IDT) for the Kubernetes API at https://api.aigrid-tenant2.aigriddev.sysdeseng.com:6443...
+level=info msg=API v1.35.5 up
+level=info msg=Waiting up to 45m0s (until 4:08PM IDT) for bootstrapping to complete...
+level=info msg=Waiting for the bootstrap etcd member to be removed...
+level=info msg=Bootstrap etcd member has been removed
+level=info msg=Destroying the bootstrap resources...
+level=info msg=Waiting up to 5m0s for bootstrap machine deletion openshift-cluster-api-guests/aigrid-tenant2-sr2hd-bootstrap...
+level=info msg=Shutting down local Cluster API controllers...
+level=info msg=Stopped controller: Cluster API
+level=info msg=Stopped controller: aws infrastructure provider
+level=info msg=Shutting down local Cluster API control plane...
+level=info msg=Local Cluster API system has completed operations
+level=info msg=Finished destroying bootstrap resources
+level=info msg=Waiting up to 40m0s (until 4:13PM IDT) for the cluster at https://api.aigrid-tenant2.aigriddev.sysdeseng.com:6443 to initialize...
+level=info msg=Waiting up to 30m0s (until 4:12PM IDT) to ensure each cluster operator has finished progressing...
+level=info msg=All cluster operators have completed progressing
+level=info msg=Checking to see if there is a route at openshift-console/console...
+level=info msg=Install complete!
+level=info msg=To access the cluster as the system:admin user when using 'oc', run
+level=info msg=    export KUBECONFIG=/home/ykerido/Projects/llm-d-inference-scheduler/docs/multi-cluster-setup/spoke-tenant2/auth/kubeconfig
+level=info msg=Access the OpenShift web-console here: https://console-openshift-console.apps.aigrid-tenant2.aigriddev.sysdeseng.com
+level=info msg=Login to the console with user: "kubeadmin", and password: "jLDq2-vJ6I4-jFv9j-zk6G9"
+level=info msg=Time elapsed: 43m10s

@@ -1,0 +1,155 @@
+# Spoke EPP Deployment
+# Deploy on: Spoke1 (aigrid-tenant1) and Spoke2 (aigrid-tenant2)
+# Uses Kubernetes discovery to find local vLLM pods
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-d-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: epp
+  namespace: llm-d-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: epp-pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: epp-pod-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: epp-pod-reader
+subjects:
+- kind: ServiceAccount
+  name: epp
+  namespace: llm-d-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: epp-config
+  namespace: llm-d-system
+data:
+  config.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: EndpointPickerConfig
+    plugins:
+    - type: core-metrics-extractor
+      parameters:
+        engineConfigs:
+        - name: vllm
+          queuedRequestsSpec: "vllm:num_requests_waiting"
+          runningRequestsSpec: "vllm:num_requests_running"
+          kvUsageSpec: "vllm:gpu_cache_usage_perc"
+          loraSpec: "vllm:lora_info"
+          cacheInfoSpec: "vllm:prefix_cache_info"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: epp
+  namespace: llm-d-system
+  labels:
+    app: epp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: epp
+  template:
+    metadata:
+      labels:
+        app: epp
+    spec:
+      serviceAccountName: epp
+      containers:
+      - name: epp
+        image: ghcr.io/yehuditkerido/llm-d-router-endpoint-picker:multi-cluster-test
+        imagePullPolicy: Always
+        args:
+        - --config-file=/etc/epp-config/config.yaml
+        - --endpoint-selector=app=vllm-tinyllama
+        - --endpoint-target-ports=8000
+        - --pool-namespace=llm-inference
+        - --metrics-port=9002
+        - --grpc-port=9001
+        - --secure-serving=false
+        - --metrics-endpoint-auth=false
+        - --health-checking=true
+        - -v=4
+        ports:
+        - name: metrics
+          containerPort: 9002
+          protocol: TCP
+        - name: grpc
+          containerPort: 9001
+          protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: config
+          mountPath: /etc/epp-config
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          grpc:
+            port: 9003
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          grpc:
+            port: 9003
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: epp-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: epp
+  namespace: llm-d-system
+  labels:
+    app: epp
+spec:
+  selector:
+    app: epp
+  ports:
+  - name: metrics
+    port: 9002
+    targetPort: 9002
+    protocol: TCP
+  - name: grpc
+    port: 9001
+    targetPort: 9001
+    protocol: TCP
+  type: ClusterIP

@@ -1,0 +1,16 @@
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: multicluster-subscription
+  namespace: models-as-a-service
+spec:
+  owner:
+    groups:
+      - name: system:authenticated
+    users: []
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 10000
+          window: 1m
