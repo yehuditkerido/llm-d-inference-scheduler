@@ -1,0 +1,17 @@
+# ExternalModel on Hub - routes to internal Envoy/EPP
+# Uses internal service (same cluster) to avoid TLS hairpin issues
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: hub-inference-model
+  namespace: models-as-a-service
+spec:
+  # Internal Envoy service (same cluster = no TLS needed)
+  # This Envoy has EPP connected for multi-cluster routing
+  # Note: MaaS creates ExternalName service pointing here
+  endpoint: envoy.llm-d-system.svc.cluster.local
+  provider: openai
+  targetModel: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  # Envoy doesn't require auth
+  credentialRef:
+    name: dummy-credentials

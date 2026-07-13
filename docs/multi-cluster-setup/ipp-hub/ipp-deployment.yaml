@@ -1,0 +1,164 @@
+# Hub IPP Deployment
+# Deploy on: Hub cluster (aigrid-hub)
+# Handles credential injection for Hub-to-Spoke authentication
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ipp
+  namespace: llm-d-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ipp
+rules:
+- apiGroups: ["inference.llm-d.ai"]
+  resources: ["externalproviders", "externalmodels"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ipp
+subjects:
+- kind: ServiceAccount
+  name: ipp
+  namespace: llm-d-system
+roleRef:
+  kind: ClusterRole
+  name: ipp
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ipp-config
+  namespace: llm-d-system
+data:
+  config.yaml: |
+    apiVersion: config.llm-d.ai/v1alpha1
+    kind: PayloadProcessorConfig
+    plugins:
+      - name: single-profile-picker
+        type: single-profile-picker
+      - name: model-provider-resolver
+        type: model-provider-resolver
+      - name: apikey-injection
+        type: apikey-injection
+    profilePicker:
+      pluginRef: single-profile-picker
+    preProcessing:
+      plugins:
+        - pluginRef: model-provider-resolver
+        - pluginRef: apikey-injection
+    profiles:
+      - name: default
+        plugins:
+          request: []
+          response: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipp
+  namespace: llm-d-system
+  labels:
+    app: ipp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ipp
+  template:
+    metadata:
+      labels:
+        app: ipp
+    spec:
+      serviceAccountName: ipp
+      containers:
+      - name: ipp
+        image: ghcr.io/yehuditkerido/llm-d-inference-payload-processor:multi-cluster
+        imagePullPolicy: Always
+        args:
+        - --config-file=/etc/ipp-config/config.yaml
+        - --metrics-port=9090
+        - --grpc-port=9004
+        - --grpc-health-port=9005
+        - --secure-serving=false
+        - --metrics-endpoint-auth=false
+        - -v=4
+        ports:
+        - name: grpc
+          containerPort: 9004
+          protocol: TCP
+        - name: health
+          containerPort: 9005
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NAMESPACE
+          value: llm-d-system
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ipp-config
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        livenessProbe:
+          grpc:
+            port: 9005
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          grpc:
+            port: 9005
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: ipp-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ipp
+  namespace: llm-d-system
+  labels:
+    app: ipp
+spec:
+  selector:
+    app: ipp
+  ports:
+  - name: grpc
+    port: 9004
+    targetPort: 9004
+    protocol: TCP
+  - name: health
+    port: 9005
+    targetPort: 9005
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  type: ClusterIP

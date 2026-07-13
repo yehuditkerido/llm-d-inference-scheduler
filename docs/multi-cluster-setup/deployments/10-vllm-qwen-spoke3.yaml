@@ -1,0 +1,114 @@
+# vLLM Deployment with Qwen model for Spoke 3
+# Qwen2.5-1.5B-Instruct is ungated, T4-friendly
+#
+# Apply to Spoke 3 only:
+#   export KUBECONFIG=docs/multi-cluster-setup/spoke-tenant3/auth/kubeconfig
+#   oc apply -f docs/multi-cluster-setup/deployments/10-vllm-qwen-spoke3.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen
+  namespace: llm-inference
+  labels:
+    app: vllm-qwen
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vllm-qwen
+  template:
+    metadata:
+      labels:
+        app: vllm-qwen
+        llm-d.ai/model: qwen2.5-1.5b-instruct
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: vllm-sa
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.6.3
+          args:
+            - "--model"
+            - "Qwen/Qwen2.5-1.5B-Instruct"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--dtype"
+            - "half"
+            - "--max-model-len"
+            - "4096"
+            - "--tensor-parallel-size"
+            - "1"
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+            requests:
+              nvidia.com/gpu: 1
+              memory: "8Gi"
+              cpu: "2"
+          env:
+            - name: HOME
+              value: "/tmp"
+            - name: HF_HOME
+              value: "/tmp/huggingface"
+            - name: TORCHINDUCTOR_CACHE_DIR
+              value: "/tmp/torchinductor_cache"
+            - name: HF_HUB_ENABLE_HF_TRANSFER
+              value: "0"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 90
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          volumeMounts:
+            - name: tmp-cache
+              mountPath: /tmp
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: tmp-cache
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-qwen
+  namespace: llm-inference
+  labels:
+    app: vllm-qwen
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: vllm-qwen

@@ -1,0 +1,78 @@
+# MaaS Subscriptions for Tenant cluster
+# User and Team level rate limits
+
+---
+# Shared subscription for all authenticated users (fallback)
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: multicluster-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 10000
+          window: 1m
+  owner:
+    groups:
+      - name: system:authenticated
+  priority: 0  # Lowest priority - used when no specific subscription matches
+
+---
+# Alice: 50 tokens/min
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: user-alice-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 50
+          window: 1m
+  owner:
+    users:
+      - "system:serviceaccount:models-as-a-service:user-alice"
+  priority: 10
+
+---
+# Bob: 100 tokens/min
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: user-bob-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 100
+          window: 1m
+  owner:
+    users:
+      - "system:serviceaccount:models-as-a-service:user-bob"
+  priority: 10
+
+---
+# Team Alpha: 200 tokens/min
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: team-alpha-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 200
+          window: 1m
+  owner:
+    users:
+      - "system:serviceaccount:models-as-a-service:team-alpha"
+  priority: 15

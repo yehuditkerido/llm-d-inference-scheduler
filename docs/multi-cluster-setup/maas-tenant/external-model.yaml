@@ -1,0 +1,17 @@
+# ExternalModel pointing to Hub's MaaS (not direct Envoy)
+# This enables two-level rate limiting:
+# 1. Tenant MaaS: user/team limits
+# 2. Hub MaaS: tenant cluster limits
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: hub-multicluster-model
+  namespace: models-as-a-service
+spec:
+  # Hub's MaaS endpoint (goes through Hub rate limiting before reaching EPP)
+  endpoint: maas.apps.aigrid-hub.aigriddev.sysdeseng.com
+  provider: openai
+  targetModel: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  # Hub tenant SA token - identifies this tenant for Hub-level rate limiting
+  credentialRef:
+    name: hub-tenant-sa-token

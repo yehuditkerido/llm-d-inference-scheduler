@@ -1,0 +1,13 @@
+# MaaSAuthPolicy allowing Hub cluster to access models on this Spoke
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: hub-access-policy
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: spoke-model
+      namespace: models-as-a-service
+  subjects:
+    users:
+      - "system:serviceaccount:hub-consumers:hub-consumer-sa"

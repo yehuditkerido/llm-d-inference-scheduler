@@ -1,0 +1,48 @@
+# NVIDIA ClusterPolicy
+# Configures how GPU operator manages GPU resources
+#
+# Driver 570.211.01 is compatible with kernel 5.14.0-687.x (RHEL 9.8 / OpenShift 4.22)
+# Driver 550.x has compilation errors with this kernel
+---
+apiVersion: nvidia.com/v1
+kind: ClusterPolicy
+metadata:
+  name: gpu-cluster-policy
+spec:
+  operator:
+    defaultRuntime: crio
+    runtimeClass: nvidia
+    use_ocp_driver_toolkit: true
+  driver:
+    enabled: true
+    repository: nvcr.io/nvidia
+    image: driver
+    version: "570.211.01"
+    usePrecompiled: false
+    useOpenKernelModules: false
+    rdma:
+      enabled: false
+    upgradePolicy:
+      autoUpgrade: false
+      maxParallelUpgrades: 1
+      maxUnavailable: "25%"
+  dcgm:
+    enabled: true
+  dcgmExporter:
+    enabled: true
+  devicePlugin:
+    enabled: true
+  gfd:
+    enabled: true
+  migManager:
+    enabled: false
+  nodeStatusExporter:
+    enabled: true
+  toolkit:
+    enabled: true
+  validator:
+    plugin:
+      env:
+        - name: WITH_WORKLOAD
+          value: "false"
+  daemonsets: {}
