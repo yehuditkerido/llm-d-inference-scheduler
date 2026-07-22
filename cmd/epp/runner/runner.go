@@ -99,6 +99,7 @@ import (
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/vllmgrpc"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/requesthandling/parsers/vllmhttp"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/filter/bylabel"
+	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/filter/modelaffinity"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/filter/prefixcacheaffinity"
 	sessionaffinityfilter "github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/filter/sessionaffinity"
 	"github.com/llm-d/llm-d-router/pkg/epp/framework/plugins/scheduling/filter/sloheadroomtier"
@@ -480,6 +481,7 @@ func (r *Runner) registerInTreePlugins() {
 	fwkplugin.Register(bylabel.DecodeRoleType, bylabel.DecodeRoleFactory)
 	fwkplugin.Register(bylabel.PrefillRoleType, bylabel.PrefillRoleFactory)
 	fwkplugin.Register(sessionaffinityfilter.SessionAffinityType, sessionaffinityfilter.Factory)
+	fwkplugin.Register(modelaffinity.PluginType, modelaffinity.Factory)
 
 	// dataparallel profile handler
 	fwkplugin.Register(dataparallel.DataParallelProfileHandlerType, dataparallel.ProfileHandlerFactory)
