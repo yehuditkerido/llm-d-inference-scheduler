@@ -41,16 +41,23 @@ import (
 	fwkplugin "github.com/llm-d/llm-d-router/pkg/epp/framework/interface/plugin"
 )
 
-const PluginType = "file-discovery"
+const (
+	PluginType = "file-discovery"
+
+	EndpointTypeLabel   = "llm-d.ai/endpoint-type"
+	EndpointTypePod     = "pod"
+	EndpointTypeCluster = "cluster"
+)
 
 // EndpointEntry is the YAML/JSON representation of a single endpoint.
 type EndpointEntry struct {
-	Name        string            `json:"name"                   yaml:"name"`
-	Namespace   string            `json:"namespace,omitempty"    yaml:"namespace,omitempty"`
-	Address     string            `json:"address"                yaml:"address"`
-	Port        string            `json:"port"                   yaml:"port"`
-	MetricsPort string            `json:"metricsPort,omitempty"  yaml:"metricsPort,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"       yaml:"labels,omitempty"`
+	Name           string            `json:"name"                      yaml:"name"`
+	Namespace      string            `json:"namespace,omitempty"       yaml:"namespace,omitempty"`
+	Address        string            `json:"address"                   yaml:"address"`
+	Port           string            `json:"port"                      yaml:"port"`
+	MetricsAddress string            `json:"metricsAddress,omitempty"  yaml:"metricsAddress,omitempty"`
+	MetricsPort    string            `json:"metricsPort,omitempty"     yaml:"metricsPort,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"          yaml:"labels,omitempty"`
 }
 
 // EndpointsFile is the top-level structure of the endpoints YAML/JSON file.
@@ -260,17 +267,32 @@ func (f *FileDiscovery) load(notifier fwkdl.DiscoveryNotifier) error {
 		if ip == nil {
 			podName = ""
 		}
-		metricsPort := e.Port
+		mAddr := e.Address
+		if e.MetricsAddress != "" {
+			mAddr = e.MetricsAddress
+		}
+		mPort := e.Port
 		if e.MetricsPort != "" {
-			metricsPort = e.MetricsPort
+			mPort = e.MetricsPort
+		}
+		labels := e.Labels
+		if labels == nil {
+			labels = make(map[string]string)
+		}
+		if v := labels[EndpointTypeLabel]; v != EndpointTypePod && v != EndpointTypeCluster {
+			if ip == nil {
+				labels[EndpointTypeLabel] = EndpointTypeCluster
+			} else {
+				labels[EndpointTypeLabel] = EndpointTypePod
+			}
 		}
 		meta := &fwkdl.EndpointMetadata{
 			NamespacedName: types.NamespacedName{Name: e.Name, Namespace: ns},
 			PodName:        podName,
 			Address:        e.Address,
 			Port:           e.Port,
-			MetricsHost:    net.JoinHostPort(e.Address, metricsPort),
-			Labels:         e.Labels,
+			MetricsHost:    net.JoinHostPort(mAddr, mPort),
+			Labels:         labels,
 		}
 		incoming[meta.NamespacedName] = struct{}{}
 		notifier.Upsert(meta)
