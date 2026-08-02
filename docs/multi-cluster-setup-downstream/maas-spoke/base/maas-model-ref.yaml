@@ -1,0 +1,10 @@
+# MaaSModelRef registers the ExternalModel with MaaS
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: spoke-model
+  namespace: models-as-a-service
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: spoke-inference-model

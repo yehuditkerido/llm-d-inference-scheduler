@@ -1,0 +1,18 @@
+# ExternalModel for TinyLlama spokes (spoke1, spoke2).
+# A2: points at vLLM ClusterIP directly (port 8000, no TLS).
+# A3: switch endpoint to envoy.llm-d-system.svc.cluster.local and drop port/tls annotations
+#     (or set port 80) once Spoke EPP is in place.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: spoke-inference-model
+  namespace: models-as-a-service
+  annotations:
+    maas.opendatahub.io/port: "8000"
+    maas.opendatahub.io/tls: "false"
+spec:
+  provider: internal
+  targetModel: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  endpoint: vllm-tinyllama.llm-inference.svc.cluster.local
+  credentialRef:
+    name: dummy-credentials

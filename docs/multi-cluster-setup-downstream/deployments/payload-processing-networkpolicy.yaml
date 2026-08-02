@@ -1,0 +1,25 @@
+# Allow payload-processing to reach the Kubernetes API and peers.
+# openshift-ingress has a namespace deny-all NetworkPolicy; without an allow
+# policy, PP cannot watch ExternalModels/Secrets and CrashLoops.
+#
+# Apply on Hub and Tenant (and any cluster where PP runs in openshift-ingress):
+#   oc apply -f payload-processing-networkpolicy.yaml -n openshift-ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payload-processing-allow
+  namespace: openshift-ingress
+  labels:
+    app: payload-processing
+spec:
+  podSelector:
+    matchLabels:
+      app: payload-processing
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - {}
+  egress:
+  - {}

@@ -2,6 +2,14 @@
 
 This directory contains configuration for testing with **downstream** IPP (ai-gateway-payload-processing) in a hub-and-spoke multi-cluster setup.
 
+## Implementation plan
+
+| Doc | Purpose |
+|-----|---------|
+| [PLAN.md](PLAN.md) | Architecture, decisions, workstreams, risks, test matrix |
+| [TASKS.md](TASKS.md) | Parallel checklist for Person A (spokes) / Person B (hub) |
+| [CLUSTERS.md](CLUSTERS.md) | Access details and power management |
+
 ## Cluster Layout
 
 | Cluster | Name | Region | Workers | Purpose |

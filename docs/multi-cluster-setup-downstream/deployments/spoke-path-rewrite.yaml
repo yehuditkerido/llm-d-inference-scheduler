@@ -1,0 +1,30 @@
+# Path rewrite for Spoke MaaS → vLLM (A2 temporary backend).
+#
+# The ExternalModel reconciler creates HTTPRoute rules that match
+# /models-as-a-service/<external-model> but do not strip that prefix.
+# vLLM expects /v1/.... Add URLRewrite on the HTTPRoute after apply.
+#
+# Do NOT use a gateway-wide Lua filter that rewrites :path before routing —
+# that turns the match into /v1/... and yields 404 route_not_found.
+#
+# Apply after maas-spoke ExternalModel is Ready:
+#
+#   oc patch httproute spoke-inference-model -n models-as-a-service --type=json -p '[
+#     {"op":"add","path":"/spec/rules/0/filters/-","value":{
+#       "type":"URLRewrite",
+#       "urlRewrite":{"path":{"type":"ReplacePrefixMatch","replacePrefixMatch":"/"}}
+#     }}
+#   ]'
+#
+# Re-apply if the ExternalModel reconciler resets the HTTPRoute.
+#
+# A3: when the backend switches to Spoke Envoy/EPP, keep an equivalent rewrite
+# (or rely on Envoy config) so the MaaS prefix is stripped before EPP/vLLM.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spoke-path-rewrite-notes
+  namespace: models-as-a-service
+data:
+  readme: |
+    See comments in docs/multi-cluster-setup-downstream/deployments/spoke-path-rewrite.yaml

@@ -1,0 +1,17 @@
+# Subscription so Hub consumer SA can mint API keys and call Spoke models
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: hub-consumer-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: spoke-model
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 100000
+          window: 1m
+  owner:
+    users:
+      - "system:serviceaccount:hub-consumers:hub-consumer-sa"
+  priority: 0

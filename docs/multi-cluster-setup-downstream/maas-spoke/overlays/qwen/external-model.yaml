@@ -1,0 +1,17 @@
+# ExternalModel for Qwen spoke (spoke3).
+# A2: points at vLLM ClusterIP directly (port 8000, no TLS).
+# A3: switch endpoint to envoy.llm-d-system.svc.cluster.local once Spoke EPP is in place.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: spoke-inference-model
+  namespace: models-as-a-service
+  annotations:
+    maas.opendatahub.io/port: "8000"
+    maas.opendatahub.io/tls: "false"
+spec:
+  provider: internal
+  targetModel: Qwen/Qwen2.5-1.5B-Instruct
+  endpoint: vllm-qwen.llm-inference.svc.cluster.local
+  credentialRef:
+    name: dummy-credentials
