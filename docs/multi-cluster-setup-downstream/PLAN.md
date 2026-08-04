@@ -62,10 +62,11 @@ HUB — Gateway 2: Standalone (EPP + hub-post, our deployment) — namespace `ll
        → hub-post [hubMode TRANSFORM]: match EPP destination → apikey-injection
        → HTTPS to selected Spoke MaaS
 
-SPOKE (1/2/3)
+SPOKE (1/2/3) — namespace `llm-d-system`
   MaaS Gateway (auth)
-       → path rewrite (strip /models-as-a-service/<model>/)
-       → Spoke EPP → vLLM pod
+       → HTTPRoute → Standalone Envoy (`envoy` in `llm-d-system`)
+       → Spoke EPP (placeholder, uncomment ext_proc when ready)
+       → vLLM pod
 ```
 
 **Tenant PP:** standard chain only. One destination (Hub), so weight-based resolve with a single ExternalModel is fine — there is nothing for EPP to choose. Do **not** enable `hubMode` on Tenant. Stock RHOAI PP is enough if resolver + apikey-injection work; otherwise use the hub-mode image with `hubMode: false`.
@@ -80,10 +81,10 @@ SPOKE (1/2/3)
 |---------|--------|-------|
 | All 5 | EC2 running | Started for this work |
 | Tenant | MaaS + stock PP | Only default Tenant CR; no model/auth CRs yet (Workstream C) |
-| Hub | MaaS PP (PRE, header-only) + hub-post (hubMode) + MaaS CRs + TLS | **B1 done**, **B4 done**, B3 on hold (EPP) |
-| Spoke1 | A2 MaaS Ready + TinyLlama | Tenant Ready, key, URLRewrite, smoke 200; no Spoke EPP yet |
-| Spoke2 | A2 MaaS Ready + TinyLlama | Same as Spoke1; baseline for capacity pins |
-| Spoke3 | A2 MaaS Ready + Qwen | Same pattern; vLLM kept at 1 replica (2 GPUs); smoke 200 |
+| Hub | MaaS PP (PRE, header-only) + hub-post (hubMode) + MaaS CRs + TLS | **B1 done**, **B4 done**, B3 on hold (EPP); GW2 `envoy` in `llm-d-system` |
+| Spoke1 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; vLLM Pending (capacity); EPP placeholder |
+| Spoke2 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; MaaS → Envoy → vLLM confirmed (404 = path rewrite pending) |
+| Spoke3 | A2 MaaS Ready + Qwen + Envoy GW | GW in `llm-d-system`; MaaS auth issue (pre-existing); EPP placeholder |
 | This dir | Lifecycle + NP + maas-spoke + maas-hub + deployments | `maas-spoke/`, `maas-hub/`, `deployments/` overlays applied |
 
 ---
@@ -188,10 +189,31 @@ A2 already brings up Spoke **MaaS** (`maas.apps...`, API-key auth). A3 adds what
 | `address` | Spoke MaaS FQDN (from A2) — Hub routes inference here | MaaS API key (IPP injects) |
 | `metricsAddress` | Spoke EPP / inference-gateway metrics route | mTLS (Hub EPP scrape) |
 
-- [ ] Deploy Spoke EPP (upstream `spoke-epp.yaml` pattern)
+**Spoke standalone Envoy deployed (2026-08-04):**
+
+Same hybrid two-gateway pattern as Hub: MaaS gateway stays untouched; a standalone Envoy in `llm-d-system` sits between MaaS and vLLM, ready to host the Spoke EPP.
+
+| Component | Namespace | Details |
+|-----------|-----------|---------|
+| MaaS gateway | `openshift-ingress` | Untouched; auth + rate limit + PP (stock) |
+| ExternalModel | `models-as-a-service` | `spoke-inference-model` → `envoy.llm-d-system.svc.cluster.local:8080` |
+| Standalone Envoy | `llm-d-system` | EPP ext_proc placeholder (commented), routes → vLLM backend |
+| DestinationRule | `llm-d-system` | `envoy-no-mtls` — disables Istio mTLS for envoy service |
+
+Manifest: `deployments/spoke-envoy.yaml` (uses `VLLM_SERVICE_PLACEHOLDER` — deployed via `sed` substitution per Spoke).
+
+- [x] Deploy Spoke Envoy (EPP placeholder) on all 3 Spokes — `llm-d-system` namespace ✓
+- [x] Update ExternalModels: `spoke-inference-model` endpoint → `envoy.llm-d-system.svc.cluster.local` ✓
+- [x] DestinationRule `envoy-no-mtls` on all Spokes ✓
+- [x] Smoke test Spoke2: MaaS → Envoy → vLLM = 404 (path rewrite pending, flow confirmed) ✓
+- [ ] Deploy Spoke EPP (upstream `spoke-epp.yaml` pattern) — **on hold** (waiting for Sam’s EPP image)
 - [ ] Path rewrite after MaaS: strip `/models-as-a-service/[^/]+/` before EPP/vLLM
 - [ ] Metrics route + mTLS so Hub EPP can scrape `metricsAddress` (same as upstream)
 - [ ] Smoke: request via Spoke MaaS key → MaaS → EPP → vLLM
+
+**Pre-existing issues (not from Envoy deployment):**
+- Spoke1: vLLM pods Pending (GPU worker capacity — see A1)
+- Spoke3: MaaS auth returns 403 PERMISSION_DENIED (Authorino config issue — key validates but group-membership authorization fails; needs investigation)
 
 **Exit:** Both FQDNs exist per spoke (MaaS + metrics). No separate “exposure” step beyond that.
 
@@ -380,9 +402,11 @@ docs/multi-cluster-setup-downstream/
 ├── README.md
 ├── DEMO.md                 ← to write (from upstream DEMO + routing tests)
 ├── deployments/
-│   ├── hub-epp.yaml
-│   ├── spoke-epp.yaml
-│   ├── spoke-path-rewrite.yaml   # or EnvoyFilter
+│   ├── envoy.yaml              # Hub standalone Envoy (llm-d-system)
+│   ├── hub-post.yaml           # Hub hub-post IPP (llm-d-system)
+│   ├── spoke-envoy.yaml        # Spoke standalone Envoy template (llm-d-system)
+│   ├── hub-epp.yaml            # Hub EPP (on hold)
+│   ├── spoke-epp.yaml          # Spoke EPP (on hold)
 │   └── ...
 ├── maas-hub/
 ├── maas-tenant/
