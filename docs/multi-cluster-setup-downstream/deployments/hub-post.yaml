@@ -1,0 +1,161 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hub-post-config
+  namespace: openshift-ingress
+data:
+  config.yaml: |
+    plugins:
+      - type: model-provider-resolver
+        name: model-provider-resolver
+        parameters:
+          hubMode: true
+      - type: apikey-injection
+        name: apikey-injection
+    profiles:
+      - name: default
+        plugins:
+          request:
+            - pluginRef: model-provider-resolver
+            - pluginRef: apikey-injection
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hub-post
+  namespace: openshift-ingress
+  labels:
+    app: hub-post
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hub-post
+  template:
+    metadata:
+      labels:
+        app: hub-post
+    spec:
+      serviceAccountName: payload-processing
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: hub-post
+          image: ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode
+          imagePullPolicy: Always
+          args:
+            - --config-file=/config/config.yaml
+            - --v=3
+            - --tracing=false
+            - --secure-serving=false
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          ports:
+            - containerPort: 9004
+              name: grpc
+              protocol: TCP
+            - containerPort: 9005
+              name: health
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: config
+          configMap:
+            name: hub-post-config
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hub-post
+  namespace: openshift-ingress
+  labels:
+    app: hub-post
+spec:
+  selector:
+    app: hub-post
+  ports:
+    - name: grpc
+      port: 9004
+      targetPort: grpc
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hub-post-allow
+  namespace: openshift-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: hub-post
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: hub-post
+  namespace: openshift-ingress
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: maas-default-gateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.ext_proc.bbr
+      patch:
+        operation: INSERT_AFTER
+        value:
+          name: envoy.filters.http.ext_proc.hub-post
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+            failure_mode_allow: false
+            allow_mode_override: true
+            grpc_service:
+              envoy_grpc:
+                cluster_name: outbound|9004||hub-post.openshift-ingress.svc.cluster.local
+            processing_mode:
+              request_header_mode: SEND
+              request_body_mode: FULL_DUPLEX_STREAMED
+              request_trailer_mode: SEND
+              response_header_mode: SEND
+              response_body_mode: FULL_DUPLEX_STREAMED
+              response_trailer_mode: SEND

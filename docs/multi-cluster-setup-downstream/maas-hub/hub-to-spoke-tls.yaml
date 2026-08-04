@@ -1,0 +1,51 @@
+# Hub → Spoke TLS configuration
+#
+# The Spoke ingress controllers use self-signed CAs. The Hub gateway needs:
+# 1. Combined CA bundle (system + spoke CAs) mounted as /etc/pki/tls/certs/ca-bundle.crt
+# 2. DestinationRules with SIMPLE TLS mode for each spoke ExternalName service
+#
+# Steps to apply:
+# 1. Extract spoke CAs: for each spoke, get router-certs-default CA cert
+# 2. Combine with system CA bundle from gateway pod
+# 3. Create ConfigMap combined-ca-bundle in openshift-ingress
+# 4. Patch gateway deployment to mount at /etc/pki/tls/certs/ca-bundle.crt
+# 5. Apply DestinationRules below
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: spoke1-tls-skip
+  namespace: openshift-ingress
+spec:
+  host: maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      caCertificates: /etc/spoke-certs/ca-bundle.crt
+      sni: maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: spoke2-tls-skip
+  namespace: openshift-ingress
+spec:
+  host: maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      caCertificates: /etc/spoke-certs/ca-bundle.crt
+      sni: maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: spoke3-tls-skip
+  namespace: openshift-ingress
+spec:
+  host: maas.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com
+  trafficPolicy:
+    tls:
+      mode: SIMPLE
+      caCertificates: /etc/spoke-certs/ca-bundle.crt
+      sni: maas.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com

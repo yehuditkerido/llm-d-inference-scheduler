@@ -67,17 +67,17 @@ SPOKE (1/2/3)
 
 ---
 
-## Current env snapshot (2026-08-03)
+## Current env snapshot (2026-08-04)
 
 | Cluster | Status | Notes |
 |---------|--------|-------|
 | All 5 | EC2 running | Started for this work |
-| Tenant | MaaS + stock PP | Only default Tenant CR; no model/auth CRs |
-| Hub | MaaS + stock PP | PP stabilized (NetworkPolicy); no EPP; no hubMode yet |
+| Tenant | MaaS + stock PP | Only default Tenant CR; no model/auth CRs yet (Workstream C) |
+| Hub | MaaS PP (PRE, header-only) + hub-post (hubMode) + MaaS CRs + TLS | **B1 done**, **B4 done**, B3 on hold (EPP) |
 | Spoke1 | A2 MaaS Ready + TinyLlama | Tenant Ready, key, URLRewrite, smoke 200; no Spoke EPP yet |
 | Spoke2 | A2 MaaS Ready + TinyLlama | Same as Spoke1; baseline for capacity pins |
 | Spoke3 | A2 MaaS Ready + Qwen | Same pattern; vLLM kept at 1 replica (2 GPUs); smoke 200 |
-| This dir | Lifecycle + NP + maas-spoke | `maas-spoke/` overlays applied on all three spokes |
+| This dir | Lifecycle + NP + maas-spoke + maas-hub + deployments | `maas-spoke/`, `maas-hub/`, `deployments/` overlays applied |
 
 ---
 
@@ -233,11 +233,15 @@ Today the MaaS PP chain also runs `model-provider-resolver` + `apikey-injection`
 3. Deploy **only hub-post** with `ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode` (`hubMode` TRANSFORM + apikey), EnvoyFilter `INSERT_AFTER` EPP.
 4. Watch that `maas-controller` does not reconcile the plugin list back; if it does, pin/workaround or revisit.
 
-- [ ] Inventory Hub MaaS PP Deployment + EnvoyFilter + `payload-processing-plugins` CM
-- [ ] Narrow Hub MaaS PP to body-field-to-header only
-- [ ] Deploy hub-post (hub-mode image) after EPP — not a second full MaaS PP
-- [ ] Confirm gateway chain: Auth → MaaS PP (header) → EPP → hub-post (no duplicate PRE)
+- [x] Inventory Hub MaaS PP Deployment + EnvoyFilter + `payload-processing-plugins` CM
+- [x] Narrow Hub MaaS PP to body-field-to-header only (patched args; `maas-controller` scaled to 0 to prevent reconciliation)
+- [x] Deploy hub-post (hub-mode image) after EPP — `deployments/hub-post.yaml`
+- [x] Confirm gateway chain: Auth → MaaS PP (header) → hub-post (EPP slot vacant, will be inserted between them)
 - [ ] Tenant: leave full MaaS PP as-is (standard hop to Hub)
+
+**Done (2026-08-04):** MaaS PP narrowed to `--plugin $(MODEL_TO_HEADER)` only. `maas-controller` scaled to 0 (it reconciles the full plugin chain back — scale up temporarily for new MaaS CRs, then scale back down and re-patch PP). hub-post deployed with `ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode`, config via `hub-post-config` ConfigMap (`model-provider-resolver` hubMode + `apikey-injection`). EnvoyFilter `hub-post` is `INSERT_AFTER` PRE; when EPP is installed, anchor must change to `INSERT_AFTER` EPP.
+
+**Manifests:** `deployments/hub-post.yaml`.
 
 **Exit:** One PRE (MaaS, header only), one EPP, one hub-post; no weight-pick before EPP.
 
@@ -252,7 +256,7 @@ Model nomination is **EPP’s job**, via [`model-affinity-filter`](https://githu
 | **EPP** | `model-affinity-filter` on that header + scorers → `x-gateway-destination-endpoint` |
 | **hub-post** | hubMode TRANSFORM: match EPP destination → CycleState → `apikey-injection` |
 
-- [ ] Order: Auth → PRE → EPP → hub-post
+- [x] Order: Auth → PRE → EPP → hub-post (EnvoyFilters deployed; EPP slot vacant)
 - [ ] Hub EPP: `model-affinity-filter` (`modelHeader: x-gateway-model-name`, `labelKey: model`)
 - [ ] file-discovery entries labeled with `model:` (A4)
 - [ ] Spoke choice is EPP (header + labels + scorers), not IPP weights
@@ -261,24 +265,35 @@ Model nomination is **EPP’s job**, via [`model-affinity-filter`](https://githu
 
 ### B3. Hub EPP (same as upstream live config)
 
-- [ ] Deploy Hub EPP image that includes model-affinity-filter (fork/`multi-cluster-test` / whatever ships PR #3)
+**ON HOLD** — waiting for Sam's follow-up PR on [#2232](https://github.com/llm-d/llm-d-router/pull/2232) to add support for separate metrics endpoint (via label/attribute). Once merged, build new EPP image and deploy.
+
+- [ ] Deploy Hub EPP image with Sam's multicluster plugins (`multicluster-file-discovery`, `multicluster-metrics-*`, scorers)
 - [ ] **file-discovery** from A4 (`address` = Spoke MaaS, `metricsAddress` = metrics, `labels.model` set)
 - [ ] Scheduling profile: model-affinity-filter then scorers
 - [ ] `spoke-epp` engine / pool-average metrics if required
 - [ ] Attach EPP ext_proc **between** hub-pre and hub-post
+- [ ] Update hub-post EnvoyFilter anchor from PRE to EPP
 
 **Exit:** EPP logs show model-affinity filtering (e.g. TinyLlama → spoke1/2 only); destination header is Spoke MaaS host:443.
 
 ### B4. Hub MaaS / ExternalModel plane (MaaS → MaaS)
 
-- [ ] Hub consumer identities (Tenant SA + Spoke consumer SAs as needed)
-- [ ] ExternalModel (or DS provider refs) per spoke: **`endpoint` = same MaaS FQDN as file-discovery `address`**; `credentialRef` → Spoke API key Secret
-- [ ] TinyLlama aggregates spoke1+spoke2; Qwen → spoke3
-- [ ] hubMode: weights only mark eligibility for TRANSFORM matching; EPP chooses
-- [ ] `MaaSModelRef` / subscription / auth policy for Tenant→Hub model names
-- [ ] ReferenceGrant / HTTPRoute overrides only if still required after PP path rewrite
+- [x] Hub consumer identities: `tenant-consumers/tenant-consumer-sa` namespace + SA
+- [x] ExternalModel per spoke: `spoke1-tinyllama`, `spoke2-tinyllama`, `spoke3-qwen` — endpoint = Spoke MaaS FQDN, credentialRef → Spoke API key Secret
+- [x] Spoke API key Secrets: `spoke1-api-key`, `spoke2-api-key`, `spoke3-api-key`
+- [x] TinyLlama aggregates spoke1+spoke2; Qwen → spoke3
+- [x] `MaaSModelRef`: `hub-tinyllama` (Ready), `hub-qwen` (Ready)
+- [x] `MaaSAuthPolicy`: `tenant-access-policy` — allows `tenant-consumer-sa` — Active
+- [x] `MaaSSubscription`: `tenant-subscription` — 500 tokens/min per model — Active
+- [x] Tenant API key: generated via MaaS API, stored in `tenant-hub-gateway-credentials` Secret
+- [x] Hub→Spoke TLS: Spoke ingress CAs injected into gateway pod system CA bundle; DestinationRules with SIMPLE TLS + SNI per spoke
+- [x] Auth smoke test: correct key passes (503 — no EPP yet), wrong key → 403
 
-**SYNC:** needs Workstream A spoke FQDNs + API key Secret values (or sealed placeholders).
+**Done (2026-08-04):** All Hub MaaS CRs created. `maas-controller` scaled up temporarily for reconciliation, then back to 0. HTTPRoutes auto-created for all 3 ExternalModels. Hub gateway patched to trust Spoke ingress CAs (OCP self-signed). Smoke test: auth works; 404 from Spoke vLLM expected (A3 path rewrite pending).
+
+**Manifests:** `maas-hub/external-models.yaml`, `maas-hub/tenant-access.yaml`, `maas-hub/hub-to-spoke-tls.yaml`.
+
+**SYNC:** Spoke FQDNs + API keys obtained from Workstream A (completed by Yehudit).
 
 ---
 

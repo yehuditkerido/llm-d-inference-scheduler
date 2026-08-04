@@ -1,0 +1,63 @@
+# Hub MaaS CRs — Model references, auth policies, subscriptions
+#
+# MaaSModelRef creates the HTTPRoute for the model on the Hub MaaS gateway.
+# MaaSAuthPolicy + MaaSSubscription control who can access and at what rate.
+# After these are created, the tenant-consumer-sa can call /maas-api/v1/api-keys
+# to generate a MaaS API key.
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: hub-tinyllama
+  namespace: models-as-a-service
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: spoke1-tinyllama
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: hub-qwen
+  namespace: models-as-a-service
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: spoke3-qwen
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: tenant-access-policy
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+    - name: hub-qwen
+      namespace: models-as-a-service
+  subjects:
+    users:
+      - "system:serviceaccount:tenant-consumers:tenant-consumer-sa"
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: tenant-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: hub-tinyllama
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 500
+          window: 1m
+    - name: hub-qwen
+      namespace: models-as-a-service
+      tokenRateLimits:
+        - limit: 500
+          window: 1m
+  owner:
+    users:
+      - "system:serviceaccount:tenant-consumers:tenant-consumer-sa"
+  priority: 0
