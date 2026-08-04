@@ -378,6 +378,69 @@ Deliverable: `DEMO.md` (or `DEMO-downstream.md`) in this directory with real hos
 
 ---
 
+## Gaps to fix once EPP is deployed
+
+These are temporary workarounds in the current E2E flow that must be replaced with proper solutions once Hub EPP and Spoke EPP are operational.
+
+### 1. Hub Envoy: static Spoke API key injection (`request_headers_to_add`)
+
+**Current:** Hub Envoy route config injects Spoke API keys statically per-route via `request_headers_to_add`.  
+**Why:** `hub-post` runs in `hubMode: TRANSFORM` which only works AFTER EPP sets `x-gateway-destination-endpoint`. Without EPP, hub-post passes through without injecting credentials.  
+**Proper fix:** Once Hub EPP is deployed and sets the destination header, hub-post (TRANSFORM mode) will dynamically inject the correct Spoke key by matching the EPP-selected endpoint to an ExternalModel/ExternalProvider. Remove ALL `request_headers_to_add: Authorization` entries from Hub Envoy config.
+
+### 2. Hub Envoy: path-based Spoke routing (fallback routes)
+
+**Current:** Without EPP, Hub Envoy uses `prefix: "/models-as-a-service/spoke1-tinyllama/"` routes to select Spokes.  
+**Why:** EPP normally sets `x-gateway-destination-endpoint` header, and the header-based routes (already configured) take priority. Without EPP, no header is set.  
+**Proper fix:** Once Hub EPP is deployed, header-based routes handle all traffic. Remove path-based fallback routes (or keep as a 503 safety net).
+
+### 3. Hub Envoy: `spoke1` cluster pointing to Spoke2
+
+**Current:** The `spoke1` cluster endpoint is temporarily rewritten to `maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` because Spoke1 vLLM is Pending.  
+**Proper fix:** Revert to `maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com` once Spoke1 is healthy. EPP will handle failover naturally (unhealthy spokes get low scores).
+
+### 4. Tenant PP: `api-translation` plugin removed from deployment
+
+**Current:** Patched `payload-processing` Deployment to remove `--plugin $(API_TRANSLATION)`.  
+**Why:** `api-translation` rewrites `:path` to `/v1/chat/completions` which runs BEFORE the router filter, breaking HTTPRoute matching. `maas-controller` may revert this patch.  
+**Proper fix (options):**
+  - **(a)** Deploy a separate custom IPP instance for the Tenant (not managed by maas-controller) with only the needed plugins (`body-field-to-header` + `model-provider-resolver` + `apikey-injection`). Our EnvoyFilter points to this instance.
+  - **(b)** Fix `maas-controller` to support per-tenant plugin customization (ConfigMap toggle or CRD field).
+  - **(c)** Fix `api-translation` plugin to NOT rewrite `:path` when running pre-route (add a "pre-route" mode that only translates the body, not the path).
+
+### 5. Tenant PP: corrected EnvoyFilter (`payload-processing-fix`)
+
+**Current:** Created a separate EnvoyFilter `payload-processing-fix` because the maas-controller's `payload-processing` has two bugs:
+  - Wrong `subFilter` match: references `extensions.istio.io/wasmplugin/openshift-ingress.kuadrant-maas-default-gateway` (WasmPlugin naming), but Kuadrant deploys via EnvoyFilter giving it the name `envoy.filters.http.wasm`.
+  - Invalid `request_trailer_mode: SKIP` when using `FULL_DUPLEX_STREAMED` (Envoy requires `SEND`).
+
+**Why:** The maas-controller was built for a Kuadrant version that uses WasmPlugin CRs. Our clusters have an older Kuadrant (via `rh-connectivity-link`) that deploys wasm via EnvoyFilter.  
+**Proper fix (options):**
+  - **(a)** Upgrade Kuadrant/rh-connectivity-link to deploy wasm via WasmPlugin CRs. Then the maas-controller's subFilter match works natively.
+  - **(b)** Patch maas-controller to generate the correct subFilter name (`envoy.filters.http.wasm`) and `request_trailer_mode: SEND`.
+  - **(c)** Same as gap #4(a): deploy our own IPP instance with our own corrected EnvoyFilter, ignore maas-controller's broken one entirely.
+
+### 6. Credential Secret: manual label `inference.networking.k8s.io/bbr-managed`
+
+**Current:** Manually added label to `hub-gateway-credentials` Secret so the PP's `apikey-injection` plugin discovers it (label-filtered informer).  
+**Why:** The `maas-controller` creates ExternalModels and credential Secrets but does NOT add the required label for the PP's Secret informer.  
+**Proper fix:** Fix `maas-controller` to add `inference.networking.k8s.io/bbr-managed: "true"` to any Secret referenced by `credentialRef` in ExternalModels. File a bug upstream.
+
+### 7. Spoke Envoy: path rewrite (strip MaaS prefix)
+
+**Current:** Spoke Envoy has `regex_rewrite` to strip `/models-as-a-service/[model-name]/` before forwarding to vLLM.  
+**Why:** MaaS routes include the namespace/model prefix; vLLM only understands `/v1/...` paths.  
+**Proper fix:** Once Spoke EPP is deployed, it should handle path normalization (or this stays as a permanent Envoy config — it's not a workaround, it's correct behavior for any Spoke sitting between MaaS and vLLM).
+
+### 8. Pre-existing cluster issues
+
+| Cluster | Issue | Fix needed |
+|---------|-------|-----------|
+| Spoke1 | vLLM pods Pending (GPU capacity) | Free GPU resources or scale node group |
+| Spoke3 | MaaS auth 403 PERMISSION_DENIED | Authorino OPA `require-group-membership` failing; investigate AuthConfig |
+
+---
+
 ## Gap risks (watch list)
 
 | Risk | Why | Mitigation |
@@ -390,6 +453,9 @@ Deliverable: `DEMO.md` (or `DEMO-downstream.md`) in this directory with real hos
 | EPP subset metadata mismatch | Wrong namespace/key | Align with EPP `candidates.go` + PR #412 |
 | Image pull from GHCR | Private/package perms | Pull secret on deploy SA |
 | PRs need-rebase | Upstream moving | Demo uses prebuilt `hub-mode` image; rebase later |
+| maas-controller reverts PP patch | Controller reconciles deployment args | Gap #4: deploy separate IPP or fix controller |
+| Kuadrant wasm mismatch | EnvoyFilter vs WasmPlugin naming | Gap #5: upgrade Kuadrant or patch controller |
+| Secret label missing after recreate | maas-controller doesn't add bbr-managed label | Gap #6: patch controller or add to Helm values |
 
 ---
 
