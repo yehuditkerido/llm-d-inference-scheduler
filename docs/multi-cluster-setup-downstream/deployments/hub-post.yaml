@@ -1,9 +1,15 @@
 ---
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hub-post
+  namespace: llm-d-system
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: hub-post-config
-  namespace: openshift-ingress
+  namespace: llm-d-system
 data:
   config.yaml: |
     plugins:
@@ -24,7 +30,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hub-post
-  namespace: openshift-ingress
+  namespace: llm-d-system
   labels:
     app: hub-post
 spec:
@@ -37,7 +43,7 @@ spec:
       labels:
         app: hub-post
     spec:
-      serviceAccountName: payload-processing
+      serviceAccountName: hub-post
       securityContext:
         runAsNonRoot: true
       containers:
@@ -92,7 +98,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: hub-post
-  namespace: openshift-ingress
+  namespace: llm-d-system
   labels:
     app: hub-post
 spec:
@@ -104,58 +110,30 @@ spec:
       targetPort: grpc
       protocol: TCP
 ---
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata:
-  name: hub-post-allow
-  namespace: openshift-ingress
-spec:
-  podSelector:
-    matchLabels:
-      app: hub-post
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - {}
-  egress:
-    - {}
+  name: hub-post-crds
+rules:
+  - apiGroups: ["inference.opendatahub.io"]
+    resources: ["externalmodels", "externalproviders"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["maas.opendatahub.io"]
+    resources: ["externalmodels"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch"]
 ---
-apiVersion: networking.istio.io/v1alpha3
-kind: EnvoyFilter
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
 metadata:
-  name: hub-post
-  namespace: openshift-ingress
-spec:
-  targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: maas-default-gateway
-  configPatches:
-    - applyTo: HTTP_FILTER
-      match:
-        context: GATEWAY
-        listener:
-          filterChain:
-            filter:
-              name: envoy.filters.network.http_connection_manager
-              subFilter:
-                name: envoy.filters.http.ext_proc.bbr
-      patch:
-        operation: INSERT_AFTER
-        value:
-          name: envoy.filters.http.ext_proc.hub-post
-          typed_config:
-            "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
-            failure_mode_allow: false
-            allow_mode_override: true
-            grpc_service:
-              envoy_grpc:
-                cluster_name: outbound|9004||hub-post.openshift-ingress.svc.cluster.local
-            processing_mode:
-              request_header_mode: SEND
-              request_body_mode: FULL_DUPLEX_STREAMED
-              request_trailer_mode: SEND
-              response_header_mode: SEND
-              response_body_mode: FULL_DUPLEX_STREAMED
-              response_trailer_mode: SEND
+  name: hub-post-crds
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hub-post-crds
+subjects:
+  - kind: ServiceAccount
+    name: hub-post
+    namespace: llm-d-system
