@@ -408,17 +408,24 @@ These are temporary workarounds in the current E2E flow that must be replaced wi
   - **(b)** Fix `maas-controller` to support per-tenant plugin customization (ConfigMap toggle or CRD field).
   - **(c)** Fix `api-translation` plugin to NOT rewrite `:path` when running pre-route (add a "pre-route" mode that only translates the body, not the path).
 
-### 5. Tenant PP: corrected EnvoyFilter (`payload-processing-fix`)
+### 5. Tenant PP: corrected EnvoyFilter (`payload-processing-fix`) — RHOAIENG-76228
 
-**Current:** Created a separate EnvoyFilter `payload-processing-fix` because the maas-controller's `payload-processing` has two bugs:
-  - Wrong `subFilter` match: references `extensions.istio.io/wasmplugin/openshift-ingress.kuadrant-maas-default-gateway` (WasmPlugin naming), but Kuadrant deploys via EnvoyFilter giving it the name `envoy.filters.http.wasm`.
-  - Invalid `request_trailer_mode: SKIP` when using `FULL_DUPLEX_STREAMED` (Envoy requires `SEND`).
+**Current:** Created a separate EnvoyFilter `payload-processing-fix` with the correct `subFilter: envoy.filters.http.wasm` anchor and `priority: 10`. The maas-controller's original `payload-processing` EnvoyFilter remains but is harmless (its anchor never matches).
 
-**Why:** The maas-controller was built for a Kuadrant version that uses WasmPlugin CRs. Our clusters have an older Kuadrant (via `rh-connectivity-link`) that deploys wasm via EnvoyFilter.  
-**Proper fix (options):**
-  - **(a)** Upgrade Kuadrant/rh-connectivity-link to deploy wasm via WasmPlugin CRs. Then the maas-controller's subFilter match works natively.
-  - **(b)** Patch maas-controller to generate the correct subFilter name (`envoy.filters.http.wasm`) and `request_trailer_mode: SEND`.
-  - **(c)** Same as gap #4(a): deploy our own IPP instance with our own corrected EnvoyFilter, ignore maas-controller's broken one entirely.
+**Root cause:** This is a **known Red Hat bug** ([RHOAIENG-76228](https://redhat.atlassian.net/browse/RHOAIENG-76228)). RHOAI 3.4.2 ships MaaS v0.1.1 which was built for RHCL 1.3 (uses WasmPlugin CRs → filter named `extensions.istio.io/wasmplugin/...`). However, RHCL 1.3 is **no longer available** in the OLM catalog — only RHCL 1.4.2 is offered in the `stable` channel. RHCL 1.4 deploys auth via EnvoyFilter (no WasmPlugin CR), naming it `envoy.filters.http.wasm`. The maas-controller's `subFilter` match never fires, so ext_proc is never inserted.
+
+**Fix status:**
+  - Fix merged to `main` on 2026-07-10: [PR #1146](https://github.com/opendatahub-io/models-as-a-service/pull/1146) (dual-anchor approach: 4 configPatches covering both WasmPlugin and RHCL 1.4 naming).
+  - Will ship in **RHOAI 3.5** (MaaS v0.2.1). Currently only available as EA (`3.5.0-ea.2` on `beta` channel).
+  - RHCL downgrade to 1.3 is not possible (removed from catalog).
+  - The env var approach (PR #1144) is also not in the deployed binary.
+
+**Our workaround is stable:** The custom `payload-processing-fix` EnvoyFilter is safe because:
+  - `maas-controller` only reconciles its own EF by name (`payload-processing`) — it never touches ours.
+  - The controller's original EF is inert (wrong anchor = no match = no effect).
+  - Both coexist without conflict.
+
+**Resolution:** Upgrade to RHOAI 3.5 when GA. The controller will then generate the correct dual-anchor EF natively, and `payload-processing-fix` can be removed.
 
 ### 6. Credential Secret: manual label `inference.networking.k8s.io/bbr-managed`
 
