@@ -296,13 +296,15 @@ Deploy a **separate standalone Envoy** (`envoy`) in the `llm-d-system` namespace
 
 ### B3. Hub EPP (on GW2)
 
-**ON HOLD** — waiting for Sam's follow-up PR on [#2232](https://github.com/llm-d/llm-d-router/pull/2232) to add support for separate metrics endpoint (via label/attribute). Once merged, build new EPP image and deploy on GW2.
+### B3. Hub EPP (on GW2) — WORKING ✓
 
-- [ ] Deploy Hub EPP image with Sam's multicluster plugins (`multicluster-file-discovery`, `multicluster-metrics-*`, scorers)
-- [ ] **file-discovery** from A4 (`address` = Spoke MaaS, `metricsAddress` = metrics, `labels.model` set)
-- [ ] Scheduling profile: model-affinity-filter then scorers
-- [ ] `spoke-epp` engine / pool-average metrics if required
-- [ ] Attach EPP ext_proc on GW2 **before** hub-post
+**Status (2026-08-05):** Hub EPP is deployed and functional. Root cause of ext_proc hang was incorrect `processing_mode` — must use `FULL_DUPLEX_STREAMED` (see Gap #8).
+
+- [x] Deploy Hub EPP image with Sam's multicluster plugins (`multicluster-file-discovery`, `multicluster-metrics-*`, scorers)
+- [x] Configure `clusters.yaml` with Spoke endpoints (using `stub-metrics` for metrics)
+- [x] Wire EPP ext_proc on Hub Envoy with correct `FULL_DUPLEX_STREAMED` processing mode
+- [x] Verify EPP picks endpoints and sets `x-gateway-destination-endpoint` (rotation across spokes confirmed)
+- [ ] Attach hub-post AFTER EPP for credential injection (next step)
 
 **Exit:** EPP logs show model-affinity filtering (e.g. TinyLlama → spoke1/2 only); destination header is Spoke MaaS host:443.
 
@@ -439,7 +441,28 @@ These are temporary workarounds in the current E2E flow that must be replaced wi
 **Why:** MaaS routes include the namespace/model prefix; vLLM only understands `/v1/...` paths.  
 **Proper fix:** Once Spoke EPP is deployed, it should handle path normalization (or this stays as a permanent Envoy config — it's not a workaround, it's correct behavior for any Spoke sitting between MaaS and vLLM).
 
-### 8. Pre-existing cluster issues
+### 8. Hub EPP ext_proc: `processing_mode` must be `FULL_DUPLEX_STREAMED`
+
+**Root cause found (2026-08-05):** The Hub Envoy ext_proc filter was initially configured with `request_body_mode: BUFFERED` (and later `NONE`), which caused an ext_proc protocol deadlock:
+  - With `BUFFERED`: Envoy waits for EPP's HeadersResponse before sending body. EPP waits for body before responding to headers → **deadlock**.
+  - With `NONE`: Envoy never sends body, EPP cannot extract model name → hangs or falls back incorrectly.
+
+**Correct configuration:** ALL standard llm-d-router deployment manifests use `FULL_DUPLEX_STREAMED`:
+```yaml
+processing_mode:
+  request_header_mode: SEND
+  response_header_mode: SEND
+  request_body_mode: FULL_DUPLEX_STREAMED
+  response_body_mode: FULL_DUPLEX_STREAMED
+  request_trailer_mode: SEND
+  response_trailer_mode: SEND
+message_timeout: 1000s
+```
+With `FULL_DUPLEX_STREAMED`, Envoy sends headers AND body to EPP without waiting for intermediate responses.
+
+**Status:** Fixed. Hub EPP is now correctly receiving requests, selecting endpoints, and setting `x-gateway-destination-endpoint`. Verified rotation across spoke1/spoke2/spoke3.
+
+### 9. Pre-existing cluster issues
 
 | Cluster | Issue | Fix needed |
 |---------|-------|-----------|
