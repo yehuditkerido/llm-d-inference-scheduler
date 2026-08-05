@@ -75,16 +75,16 @@ SPOKE (1/2/3) — namespace `llm-d-system`
 
 ---
 
-## Current env snapshot (2026-08-04)
+## Current env snapshot (2026-08-05)
 
 | Cluster | Status | Notes |
 |---------|--------|-------|
 | All 5 | EC2 running | Started for this work |
-| Tenant | MaaS + stock PP | Only default Tenant CR; no model/auth CRs yet (Workstream C) |
-| Hub | MaaS PP (PRE, header-only) + hub-post (hubMode) + MaaS CRs + TLS | **B1 done**, **B4 done**, B3 on hold (EPP); GW2 `envoy` in `llm-d-system` |
-| Spoke1 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; vLLM Pending (capacity); EPP placeholder |
-| Spoke2 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; MaaS → Envoy → vLLM confirmed (404 = path rewrite pending) |
-| Spoke3 | A2 MaaS Ready + Qwen + Envoy GW | GW in `llm-d-system`; MaaS auth issue (pre-existing); EPP placeholder |
+| Tenant | MaaS + PP + auth CRs | E2E validated: Alice → Tenant → Hub → EPP → Spoke (503 = vLLM Pending). `api-translation` removed from PP. |
+| Hub | MaaS PP + Hub Envoy (EPP + static keys) | EPP picks spokes, Hub Envoy routes with static spoke API keys. hub-post blocked (Gap #9). |
+| Spoke1 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; vLLM Pending (capacity); routed correctly (503) |
+| Spoke2 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; vLLM Pending (capacity); routed correctly (503) |
+| Spoke3 | A2 MaaS Ready + Qwen + Envoy GW | GW in `llm-d-system`; pre-existing 403 from MaaS auth; EPP placeholder |
 | This dir | Lifecycle + NP + maas-spoke + maas-hub + deployments | `maas-spoke/`, `maas-hub/`, `deployments/` overlays applied |
 
 ---
@@ -304,7 +304,9 @@ Deploy a **separate standalone Envoy** (`envoy`) in the `llm-d-system` namespace
 - [x] Configure `clusters.yaml` with Spoke endpoints (using `stub-metrics` for metrics)
 - [x] Wire EPP ext_proc on Hub Envoy with correct `FULL_DUPLEX_STREAMED` processing mode
 - [x] Verify EPP picks endpoints and sets `x-gateway-destination-endpoint` (rotation across spokes confirmed)
-- [ ] Attach hub-post AFTER EPP for credential injection (next step)
+- [x] Hub Envoy routes inject correct Spoke API keys per-route (static injection; see Gap #1)
+- [x] Validated full chain: Hub Envoy → EPP → Spoke MaaS (auth passes) → Spoke Envoy → vLLM (503 = GPU Pending)
+- [ ] Hub-post dynamic credential injection (blocked: `pr-416` image doesn't implement endpoint-based hubMode TRANSFORM resolution — see Gap #9)
 
 **Exit:** EPP logs show model-affinity filtering (e.g. TinyLlama → spoke1/2 only); destination header is Spoke MaaS host:443.
 
@@ -331,20 +333,38 @@ Deploy a **separate standalone Envoy** (`envoy`) in the `llm-d-system` namespace
 
 ## Workstream C — Tenant (can start in parallel; finish after Hub keys)
 
-### C1. Manifests / identities (parallel-safe)
+### C1. Manifests / identities — DONE ✓
 
-- [ ] User/team SAs (alice, charlie, team-alpha) — same as DEMO.md
-- [ ] Dummy/local ExternalModel scaffolding pointing at Hub FQDN
-- [ ] DestinationRule / TLS to Hub MaaS if needed
+- [x] User/team SAs (alice, charlie, team-alpha) — created in `models-as-a-service`
+- [x] ExternalModels `hub-tinyllama` + `hub-qwen` → endpoint `maas.apps.aigrid-ds-hub.aigriddev.sysdeseng.com`
+- [x] MaaSModelRefs mapping `tinyllama` → `hub-tinyllama`, `qwen` → `hub-qwen`
+- [x] TLS handled by MaaS gateway (ExternalName Service + `maas.opendatahub.io/port: "443"` annotation)
 
-### C2. Wire after Hub is ready
+### C2. Wire after Hub is ready — DONE ✓
 
-- [ ] Generate Tenant→Hub API key on Hub; store in Tenant Secret for PP `apikey-injection`
-- [ ] Tenant PP = **standard only** (no hubMode, no EPP): body→header + resolver + apikey → single Hub ExternalModel
-- [ ] Subscriptions + auth policies per DEMO.md (alice TinyLlama 50/min, charlie Qwen 50/min, team-alpha 200/min, Hub tenant 500/min)
-- [ ] Prefer stock RHOAI PP on Tenant; only swap image if resolver/apikey are broken on stock
+- [x] Hub API key stored in Tenant Secret `hub-gateway-credentials` (ns `models-as-a-service`, both labels present)
+- [x] Tenant PP = **standard** (no hubMode): body→header + resolver + apikey-injection (api-translation REMOVED to preserve MaaS path for Hub routing)
+- [x] Subscriptions: `alice-subscription` (tinyllama), `charlie-subscription` (qwen), `team-alpha-subscription` (both), `tenant-global-subscription` (system:authenticated)
+- [x] AuthPolicies: `alice-tinyllama-access`, `charlie-qwen-access`, `team-alpha-all-access`
+- [x] Stock RHOAI PP image with `payload-processing-fix` EnvoyFilter (same fix as Hub — Gap #5)
 
-**Exit:** Tenant `curl` with alice key reaches Hub (Hub may 502 until EPP/Spokes wired — still progress).
+### C2. Tenant E2E — VALIDATED ✓ (2026-08-05)
+
+Full chain confirmed working:
+```
+Alice (sk-oai-...) → Tenant MaaS (auth passes)
+  → Tenant PP (injects Hub key from hub-gateway-credentials)
+  → Hub MaaS (auth passes with Hub API key)
+  → Hub EPP (picks spoke — x-session-token: default/spoke2)
+  → Hub Envoy (routes to spoke2, injects spoke2 API key)
+  → Spoke2 MaaS (auth passes)
+  → 503 (vLLM Pending — GPU capacity, expected)
+```
+Response time: ~264ms (Hub upstream). E2E returns HTTP 503 = vLLM pods are Pending on all Spokes.
+
+**Note:** `api-translation` plugin MUST be removed from Tenant PP args. It rewrites the path to `/v1/chat/completions` which breaks Hub MaaS routing (Hub needs `/models-as-a-service/<model>/...` prefix). The `maas-controller` may re-add it if it reconciles; monitor and re-patch if needed.
+
+**Exit:** ✓ Tenant `curl` with Alice API key reaches Hub → EPP → Spoke (503 = vLLM down, not a routing issue).
 
 ---
 
@@ -396,10 +416,9 @@ These are temporary workarounds in the current E2E flow that must be replaced wi
 **Why:** EPP normally sets `x-gateway-destination-endpoint` header, and the header-based routes (already configured) take priority. Without EPP, no header is set.  
 **Proper fix:** Once Hub EPP is deployed, header-based routes handle all traffic. Remove path-based fallback routes (or keep as a 503 safety net).
 
-### 3. Hub Envoy: `spoke1` cluster pointing to Spoke2
+### 3. Hub Envoy: `spoke1` cluster pointing to Spoke2 — FIXED
 
-**Current:** The `spoke1` cluster endpoint is temporarily rewritten to `maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` because Spoke1 vLLM is Pending.  
-**Proper fix:** Revert to `maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com` once Spoke1 is healthy. EPP will handle failover naturally (unhealthy spokes get low scores).
+**Fixed (2026-08-05):** Reverted to `maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com`. Also updated all Spoke API keys to correct values (`spoke1: sk-oai-D09k...`, `spoke2: sk-oai-1WdS...`, `spoke3: sk-oai-d4Aq...`).
 
 ### 4. Tenant PP: `api-translation` plugin removed from deployment
 
@@ -462,7 +481,21 @@ With `FULL_DUPLEX_STREAMED`, Envoy sends headers AND body to EPP without waiting
 
 **Status:** Fixed. Hub EPP is now correctly receiving requests, selecting endpoints, and setting `x-gateway-destination-endpoint`. Verified rotation across spoke1/spoke2/spoke3.
 
-### 9. Pre-existing cluster issues
+### 9. Hub-post: `hubMode: true` doesn't implement endpoint-based resolution
+
+**Current:** The hub-post image (`ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode`, build `pr-416`) is deployed with `hubMode: true` parameter. However, the `model-provider-resolver` plugin in this image still resolves by model NAME (from request body or `x-gateway-model-name` header), not by endpoint from `x-gateway-destination-endpoint` header.
+
+**Impact:** Hub-post cannot dynamically select which Spoke's credentials to inject based on EPP's routing decision. Static API key injection in Envoy routes is used instead (Gap #1).
+
+**Proper fix:** The `model-provider-resolver` plugin needs a TRANSFORM mode that:
+1. Reads `x-gateway-destination-endpoint` header (set by EPP)
+2. Matches endpoint to ExternalProvider's `spec.endpoint` field
+3. Retrieves credentials from the matched provider's `auth.secretRef`
+4. Passes to `apikey-injection` for header injection
+
+**Workaround (current):** Static `request_headers_to_add: Authorization` in Hub Envoy routes per-spoke. Functionally correct for the demo.
+
+### 10. Pre-existing cluster issues
 
 | Cluster | Issue | Fix needed |
 |---------|-------|-----------|
