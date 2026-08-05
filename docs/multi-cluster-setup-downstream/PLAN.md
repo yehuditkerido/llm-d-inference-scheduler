@@ -206,10 +206,16 @@ Manifest: `deployments/spoke-envoy.yaml` (uses `VLLM_SERVICE_PLACEHOLDER` — de
 - [x] Update ExternalModels: `spoke-inference-model` endpoint → `envoy.llm-d-system.svc.cluster.local` ✓
 - [x] DestinationRule `envoy-no-mtls` on all Spokes ✓
 - [x] Smoke test Spoke2: MaaS → Envoy → vLLM = 404 (path rewrite pending, flow confirmed) ✓
-- [ ] Deploy Spoke EPP (upstream `spoke-epp.yaml` pattern) — **on hold** (waiting for Sam’s EPP image)
+- [x] Deploy Spoke EPP on all 3 Spokes ✔ (2026-08-05)
+  - Image: `ghcr.io/llm-d/llm-d-router-endpoint-picker:main`
+  - Spoke1/2: `--endpoint-selector=app=vllm-tinyllama`, Spoke3: `--endpoint-selector=app=vllm-qwen`
+  - All: `--pool-namespace=llm-inference`, `--grpc-port=9001`, `--secure-serving=false`
+  - RBAC: `epp-pod-reader` ClusterRole (pods, services, endpointslices)
+  - Config: `core-metrics-extractor` with vLLM engine specs
+- [x] Envoy ConfigMap: EPP ext_proc (`FULL_DUPLEX_STREAMED`) + EPP cluster enabled on all 3 Spokes ✔
 - [ ] Path rewrite after MaaS: strip `/models-as-a-service/[^/]+/` before EPP/vLLM
 - [ ] Metrics route + mTLS so Hub EPP can scrape `metricsAddress` (same as upstream)
-- [ ] Smoke: request via Spoke MaaS key → MaaS → EPP → vLLM
+- [ ] Smoke: request via Spoke MaaS key → MaaS → EPP → vLLM (blocked: vLLM Pending on all Spokes)
 
 **Pre-existing issues (not from Envoy deployment):**
 - Spoke1: vLLM pods Pending (GPU worker capacity — see A1)
