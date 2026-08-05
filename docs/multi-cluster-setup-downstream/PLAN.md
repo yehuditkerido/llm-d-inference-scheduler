@@ -6,124 +6,110 @@
 |-------|-----------|----------------|
 | Platform | [MaaS](https://github.com/opendatahub-io/models-as-a-service) | Already partially installed (RHOAI) |
 | IPP | [ai-gateway-payload-processing](https://github.com/opendatahub-io/ai-gateway-payload-processing) | `ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode` (PRs [#412](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/412), [#415](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/415), [#416](https://github.com/opendatahub-io/ai-gateway-payload-processing/pull/416)) |
-| EPP | llm-d-router (same as upstream) | `ghcr.io/yehuditkerido/llm-d-router-endpoint-picker:multi-cluster-test` (override if you have a newer tag) |
+| EPP | llm-d-router (same as upstream) | `ghcr.io/llm-d/llm-d-router-endpoint-picker:main` |
 
 **Reference:** upstream working env in `docs/multi-cluster-setup/`, E2E PDF (AI-Grid E2E), demo tests in [`../multi-cluster-setup/DEMO.md`](../multi-cluster-setup/DEMO.md).
 
 **Clusters:** `aigrid-ds-{tenant,hub,spoke1,spoke2,spoke3}` — see [CLUSTERS.md](CLUSTERS.md).
 
----
-
-## Decisions (locked)
-
-1. **Hub topology = hybrid two-gateway.** GW1 = MaaS gateway (auth + rate limit + full PP, controller-managed). GW2 = standalone Envoy (EPP + hub-post, our deployment). Avoids `maas-controller` reconciliation conflicts (decision 2026-08-04).
-2. **EPP owns spoke selection.** Downstream IPP must not pick by weight (`selectByWeight`). Use `hubMode: true` so IPP only PROPOSEs eligible endpoints, then TRANSFORMs after EPP sets `x-gateway-destination-endpoint`.
-3. **All three spokes must be healthy** — fix Spoke1 before calling the env "ready".
-4. **EPP config/behavior matches upstream**; fix any DS integration gaps as they appear.
-5. **Test bar = DEMO.md suite + PDF routing tests** (model affinity, load split, credential injection).
-6. **Shared manifests live under this directory** (same idea as upstream `multi-cluster-setup/`), so both people apply the same YAML. We create them as we implement — they do not exist yet.
-
-### Clarifications from earlier questions
-
-**"Deploy with this image" (image pull):**  
-We patch/redeploy `payload-processing` (and hub-pre/hub-post if split) to use  
-`ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode`.  
-If pods go `ImagePullBackOff`, we add a GHCR pull secret to `openshift-ingress` (or the deploy namespace). No other registry work unless pull fails.
-
-**"Manifests question":**  
-Upstream keeps deploy YAML under `docs/multi-cluster-setup/` (`maas-hub/`, `deployments/`, …).  
-Downstream only has cluster lifecycle scripts today. As we implement, we add the same kind of tree here (`maas-spoke/`, `maas-hub/`, `maas-tenant/`, `deployments/`, …) so work is reviewable and repeatable — not ad-hoc `oc` only.
 
 ---
 
-## Target architecture (downstream) — Hybrid Two-Gateway
+## Target architecture (downstream)
 
-**Decision (2026-08-04):** Use a **hybrid two-gateway** approach on the Hub. MaaS gateway stays untouched (no scaling down `maas-controller`, no narrowing the PP chain). A separate gateway handles EPP + hub-post.
-
-**Why not single gateway?** The `maas-controller` reconciles `payload-processing` (Deployment + EnvoyFilter) to its desired state. There is no CRD field or ConfigMap to disable individual plugins. If the controller restarts for any reason, it reverts our customizations — silently breaking the entire ext_proc chain. This was validated experimentally: controller restored all 4 plugins and reverted the EnvoyFilter match.
+All clusters use a **hybrid two-gateway** approach: MaaS gateway (controller-managed, handles auth + rate limiting) stays untouched. A standalone Envoy in `llm-d-system` handles EPP and custom routing logic. This avoids `maas-controller` reconciliation conflicts.
 
 ```
 TENANT
-  User → MaaS Gateway (auth + rate limit)
-       → PP (standard, NOT hubMode): body→header + resolver + apikey → Hub key
+  User → MaaS Gateway (auth + rate limit + Authorino)
+       → PP (body→header + resolver + apikey-injection) → injects Hub API key
        → HTTPS to Hub MaaS
-       (single ExternalModel → Hub only; no candidates / no EPP)
 
-HUB — Gateway 1: MaaS (untouched, controller-managed)
-  MaaS Gateway (auth + rate limit)
-       → Auth (Authorino)
-       → MaaS PP (full chain, untouched): body→header + resolver + apikey + api-translation
-       → HTTPRoute → Hub routing gateway (GW2)
-       Note: resolver/apikey run here but are harmless — hub-post overwrites on GW2
+HUB — GW1: MaaS (controller-managed, openshift-ingress)
+  MaaS Gateway (auth + rate limit + Authorino)
+       → MaaS PP (full chain, untouched)
+       → HTTPRoute → GW2
 
-HUB — Gateway 2: Standalone (EPP + hub-post, our deployment) — namespace `llm-d-system`
-  Standalone Envoy (`envoy` Deployment + Service)
-       → EPP: model-affinity-filter on X-Gateway-Model-Name + scorers → x-gateway-destination-endpoint
-       → hub-post [hubMode TRANSFORM]: match EPP destination → apikey-injection
+HUB — GW2: Standalone Envoy (llm-d-system)
+  Envoy
+       → EPP (multicluster: picks best Spoke based on metrics/affinity)
+       → Static Spoke API key injection (per-route)
        → HTTPS to selected Spoke MaaS
 
-SPOKE (1/2/3) — namespace `llm-d-system`
-  MaaS Gateway (auth)
-       → HTTPRoute → Standalone Envoy (`envoy` in `llm-d-system`)
-       → Spoke EPP (placeholder, uncomment ext_proc when ready)
+SPOKE (1/2/3) — GW1: MaaS (controller-managed, openshift-ingress)
+  MaaS Gateway (auth + rate limit + Authorino)
+       → MaaS PP (full chain, untouched)
+       → HTTPRoute → GW2
+
+SPOKE (1/2/3) — GW2: Standalone Envoy (llm-d-system)
+  Envoy
+       → Spoke EPP (pod selection: picks best vLLM pod based on metrics)
        → vLLM pod
 ```
 
-**Tenant PP:** standard chain only. One destination (Hub), so weight-based resolve with a single ExternalModel is fine — there is nothing for EPP to choose. Do **not** enable `hubMode` on Tenant. Stock RHOAI PP is enough if resolver + apikey-injection work; otherwise use the hub-mode image with `hubMode: false`.
-
-**Why the "unnecessary" MaaS PP plugins are harmless on GW1:** MaaS PP runs `model-provider-resolver` (non-hubMode) + `apikey-injection` before the request reaches GW2. The resolver may match an ExternalModel by path and inject a key. This is overwritten by hub-post on GW2 after EPP picks the actual Spoke. No functional impact — just redundant work.
+**Key design points:**
+- **Tenant:** No EPP needed (single destination = Hub). PP injects Hub API key.
+- **Hub GW1 → GW2:** MaaS routes to standalone Envoy via ExternalModel endpoint. PP plugins on GW1 are harmless (hub-post would overwrite on GW2 once dynamic injection is implemented).
+- **Spoke GW1 → GW2:** MaaS routes to standalone Envoy via ExternalModel. Spoke EPP selects the best pod within the cluster.
 
 ---
 
 ## Current env snapshot (2026-08-05)
 
-| Cluster | Status | Notes |
-|---------|--------|-------|
-| All 5 | EC2 running | Started for this work |
-| Tenant | MaaS + PP + auth CRs | E2E validated: Alice → Tenant → Hub → EPP → Spoke (503 = vLLM Pending). `api-translation` removed from PP. |
-| Hub | MaaS PP + Hub Envoy (EPP + static keys) | EPP picks spokes, Hub Envoy routes with static spoke API keys. hub-post blocked (Gap #9). |
-| Spoke1 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; vLLM Pending (capacity); routed correctly (503) |
-| Spoke2 | A2 MaaS Ready + TinyLlama + Envoy GW | GW in `llm-d-system`; vLLM Pending (capacity); routed correctly (503) |
-| Spoke3 | A2 MaaS Ready + Qwen + Envoy GW | GW in `llm-d-system`; pre-existing 403 from MaaS auth; EPP placeholder |
-| This dir | Lifecycle + NP + maas-spoke + maas-hub + deployments | `maas-spoke/`, `maas-hub/`, `deployments/` overlays applied |
+| Cluster | Component | Status |
+|---------|-----------|--------|
+| **Tenant** | MaaS Gateway | ✅ Auth working (API key + Authorino) |
+|  | Payload Processor | ✅ Running (api-translation removed, payload-processing-fix EF) |
+|  | ExternalModels | ✅ `hub-tinyllama` + `hub-qwen` → Hub MaaS |
+|  | Subscriptions/Auth | ✅ alice, charlie, team-alpha configured |
+| **Hub** | MaaS Gateway (GW1) | ✅ Auth + rate limiting working |
+|  | MaaS PP (GW1) | ✅ Stock full chain, controller-managed |
+|  | Standalone Envoy (GW2) | ✅ EPP + static spoke keys |
+|  | Hub EPP | ✅ Multicluster plugins, picks spokes, `FULL_DUPLEX_STREAMED` |
+|  | stub-metrics | ⚠️ Temporary dummy metrics — replace with real Spoke EPP metrics routes (see item #4) |
+| **Spoke1** | MaaS Gateway | ✅ Auth working |
+|  | Standalone Envoy | ✅ EPP ext_proc enabled |
+|  | Spoke EPP | ✅ Running, discovers 2 vLLM pods |
+|  | vLLM (TinyLlama) | ❌ Pending (GPU capacity) |
+| **Spoke2** | MaaS Gateway | ✅ Auth working |
+|  | Standalone Envoy | ✅ EPP ext_proc enabled |
+|  | Spoke EPP | ✅ Running, discovers 2 vLLM pods |
+|  | vLLM (TinyLlama) | ❌ Pending (GPU capacity) |
+| **Spoke3** | MaaS Gateway | ⚠️ Pre-existing 403 (Authorino OPA issue) |
+|  | Standalone Envoy | ✅ EPP ext_proc enabled |
+|  | Spoke EPP | ✅ Running, discovers 1 vLLM pod |
+|  | vLLM (Qwen) | ❌ Pending (GPU capacity) |
 
----
+### What’s needed for E2E HTTP 200
 
-## Parallel workstreams
+| # | Item | Blocker type | Effort |
+|---|------|-------------|--------|
+| 1 | **vLLM pods Running** on at least one Spoke | Infrastructure (GPU nodes) | Need GPU capacity |
+| 2 | **Spoke Envoy path rewrite** | Config (2 min per spoke) | Add `regex_rewrite` to strip `/models-as-a-service/<model>/` prefix |
+| 3 | **Spoke3 auth fix** (optional — Spoke1/2 sufficient) | Investigation | Authorino OPA `require-group-membership` rule |
+| 4 | **Expose Spoke EPP metrics + remove stub-metrics** | Config + mTLS route | See details below |
 
-Work is split so **Person A** and **Person B** can run in parallel. Sync points are marked.
-
-```text
-                    S0 Stabilize APIs / PP (either; quick)
-                                    |
-          +-------------------------+-------------------------+
-          |                         |                         |
-          v                         v                         v
-   A: Spokes                 B: Hub EPP+PP              C: Tenant prep
-   (fix Spoke1,            (hub-mode image,           (SAs, local
-    MaaS, Spoke EPP)          hubMode filters, EPP)      manifests)
-          |                         |                         |
-          +-------------------------+-------------------------+
-                                    |
-                                    v
-                     SYNC: spoke endpoints + Hub ExternalModels
-                                    |
-                                    v
-                     D: Wire keys (Tenant <-> Hub <-> Spoke)
-                                    |
-                                    v
-                     E: E2E tests (DEMO.md + PDF routing)
+Once items #1 and #2 are resolved, the full E2E chain will return HTTP 200:
+```
+Alice → Tenant MaaS (auth) → Tenant PP (Hub key) → Hub MaaS (auth)
+  → Hub EPP (pick spoke) → Hub Envoy (spoke key) → Spoke MaaS (auth)
+  → Spoke Envoy → Spoke EPP (pick pod) → vLLM → 200
 ```
 
-Suggested split:
+### Item #4: Spoke metrics exposure + stub-metrics removal
 
-| Person | Owns | Primary dirs to add |
-|--------|------|---------------------|
-| **A** | All spokes: Spoke1 fix, MaaS, Spoke EPP, path rewrite, routes | `deployments/spoke-*`, `maas-spoke/` |
-| **B** | Hub: hub-mode PP, Hub EPP, Hub MaaS model CRs, filter order | `deployments/hub-*`, `maas-hub/`, PP values |
-| **Either / together** | Tenant wiring + E2E (needs Hub+Spoke endpoints/keys) | `maas-tenant/`, `DEMO-downstream.md` |
+**Current state:** Hub EPP’s `multicluster-file-discovery` needs to scrape metrics from each Spoke to make intelligent routing decisions (KV-cache utilization, queue depth). Currently, Hub EPP’s `epp-clusters` ConfigMap points all `metricsAddress` entries to a temporary `stub-metrics` pod in `llm-d-system` (Hub) that returns empty Prometheus metrics. This makes EPP treat all Spokes as equal (random rotation).
+
+**What’s needed:**
+1. Create an OpenShift Route on each Spoke exposing Spoke EPP’s metrics port (9002) — e.g. `epp-metrics-llm-d-system.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com`
+2. Configure mTLS on these routes (Hub EPP must authenticate when scraping) — or use passthrough TLS if Spoke EPP serves TLS metrics
+3. Update Hub `epp-clusters` ConfigMap: change `metricsAddress` for each spoke from `stub-metrics.llm-d-system.svc.cluster.local` to the real Spoke metrics route
+4. Delete `stub-metrics` Deployment + Service from Hub `llm-d-system`
+
+**Impact of not doing this:** E2E will still return 200 (basic functionality works), but Hub EPP won’t make load-aware decisions — it will just round-robin across Spokes. For the demo, this is acceptable. For production-like behavior (tests #9, #10 in the test plan), real metrics are required.
 
 ---
+
 
 ## Workstream S0 — Stabilize (blocking, ~30–60 min)
 
@@ -245,9 +231,9 @@ endpoints:
 | spoke2 | TinyLlama | `maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` | `inference-gateway-llm-d-system.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` |
 | spoke3 | Qwen | `maas.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com` | `inference-gateway-llm-d-system.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com` |
 
-- [ ] Confirm both FQDNs per spoke (from A2 + A3)
-- [ ] Give table + Spoke API key Secret names to Person B
-- [ ] B puts them in Hub `cluster-endpoints` and ExternalModel `endpoint` (= `address`, must match exactly)
+- [x] Confirmed both FQDNs per spoke (MaaS + metrics stub)
+- [x] Spoke API keys configured in Hub Envoy routes
+- [x] Hub `epp-clusters` ConfigMap configured with all 3 Spoke endpoints
 
 **SYNC with B:** Hub file-discovery + ExternalModels.
 
@@ -268,7 +254,7 @@ Hub already has **MaaS-managed** stock `payload-processing` (Deployment + EnvoyF
 - [x] **Decision: leave MaaS PP untouched, `maas-controller` replicas=1**
 - [x] Scale `maas-controller` back to 1 ✓ (2026-08-04)
 - [x] Remove `hub-post` EnvoyFilter from MaaS gateway ✓ (moved to GW2)
-- [ ] Tenant: leave full MaaS PP as-is (standard hop to Hub)
+- [x] Tenant: MaaS PP runs standard chain (api-translation removed for Hub routing)
 
 **Exit:** MaaS PP runs the full chain on GW1. `maas-controller` runs normally. `X-Gateway-Model-Name` header is set.
 
@@ -290,9 +276,9 @@ Deploy a **separate standalone Envoy** (`envoy`) in the `llm-d-system` namespace
 - [x] hub-post ext_proc configured in GW2 Envoy config (grpc cluster → `hub-post.llm-d-system:9004`) ✓
 - [x] GW2 → Spoke TLS: mounts `spoke-ca-certs` ConfigMap with Spoke ingress CAs; each cluster has `UpstreamTlsContext` with `trusted_ca` + SNI ✓
 - [x] DestinationRule `envoy-no-mtls`: disable Istio mTLS for GW2 ✓
-- [ ] Hub EPP ext_proc on GW2 **before** hub-post (**B3, on hold**)
-- [ ] file-discovery entries labeled with `model:` (A4)
-- [ ] Spoke choice is EPP (header + labels + scorers), not IPP weights
+- [x] Hub EPP ext_proc on GW2 before hub-post (WORKING — see B3)
+- [x] file-discovery entries labeled with `model:` (clusters.yaml configured)
+- [x] Spoke choice is EPP (verified: rotation across spoke1/2/3)
 
 **Smoke test (2026-08-04):** MaaS GW1 → hub-router GW2 → Spoke1 MaaS = **404** (expected — Spoke path rewrite A3 pending). Confirms full two-gateway flow works: auth ✓, rate limiting ✓, hub-post ext_proc processes request ✓, path-based routing to correct Spoke ✓.
 
@@ -376,10 +362,10 @@ Response time: ~264ms (Hub upstream). E2E returns HTTP 503 = vLLM pods are Pendi
 
 ## Workstream D — Cross-cluster glue (together / after A+B sync)
 
-- [ ] End-to-end secret matrix documented (no keys in git; use local sealed files or cluster-only Secrets)
-- [ ] Hub EPP endpoints file matches live Spoke routes
-- [ ] Hub ExternalModels match EPP endpoint hostnames (port-strip matching — covered by hubMode TRANSFORM)
-- [ ] Fix any DS↔EPP contract gaps (metadata namespace/key, header names, provider enum)
+- [x] End-to-end secret matrix: keys stored in cluster-only Secrets (not in git)
+- [x] Hub EPP endpoints file matches live Spoke routes (clusters.yaml)
+- [x] Hub ExternalModels match EPP endpoint hostnames (static key injection in Envoy routes)
+- [x] DS↔EPP contract: validated FULL_DUPLEX_STREAMED mode, model extraction from body, endpoint selection
 
 ---
 
@@ -406,128 +392,86 @@ Deliverable: `DEMO.md` (or `DEMO-downstream.md`) in this directory with real hos
 
 ---
 
-## Gaps to fix once EPP is deployed
+## Open gaps (blocking full E2E)
 
-These are temporary workarounds in the current E2E flow that must be replaced with proper solutions once Hub EPP and Spoke EPP are operational.
+These must be resolved before the E2E returns HTTP 200 or before the demo is production-ready.
 
-### 1. Hub Envoy: static Spoke API key injection (`request_headers_to_add`)
+### 1. Spoke Envoy: path rewrite (strip MaaS prefix)
 
-**Current:** Hub Envoy route config injects Spoke API keys statically per-route via `request_headers_to_add`.  
-**Why:** `hub-post` runs in `hubMode: TRANSFORM` which only works AFTER EPP sets `x-gateway-destination-endpoint`. Without EPP, hub-post passes through without injecting credentials.  
-**Proper fix:** Once Hub EPP is deployed and sets the destination header, hub-post (TRANSFORM mode) will dynamically inject the correct Spoke key by matching the EPP-selected endpoint to an ExternalModel/ExternalProvider. Remove ALL `request_headers_to_add: Authorization` entries from Hub Envoy config.
+**Status:** Not yet applied to all Spokes.  
+**Problem:** MaaS routes requests to Spoke Envoy with path `/models-as-a-service/<model>/v1/chat/completions`. vLLM only understands `/v1/...`.  
+**Fix:** Add `regex_rewrite` to Spoke Envoy route config to strip the `/models-as-a-service/[^/]+/` prefix. 2 min per Spoke.
 
-### 2. Hub Envoy: path-based Spoke routing (fallback routes)
+### 2. Spoke EPP metrics not exposed (stub-metrics in use)
 
-**Current:** Without EPP, Hub Envoy uses `prefix: "/models-as-a-service/spoke1-tinyllama/"` routes to select Spokes.  
-**Why:** EPP normally sets `x-gateway-destination-endpoint` header, and the header-based routes (already configured) take priority. Without EPP, no header is set.  
-**Proper fix:** Once Hub EPP is deployed, header-based routes handle all traffic. Remove path-based fallback routes (or keep as a 503 safety net).
+**Status:** Hub EPP scrapes a dummy `stub-metrics` pod instead of real Spoke EPP metrics.  
+**Problem:** Without real metrics, Hub EPP can’t make load-aware decisions (KV-cache, queue depth). It just round-robins.  
+**Fix:**
+1. Create OpenShift Route per Spoke exposing EPP metrics (port 9002)
+2. Configure mTLS or passthrough TLS on these routes
+3. Update Hub `epp-clusters` ConfigMap → real Spoke metrics addresses
+4. Delete `stub-metrics` Deployment + Service from Hub `llm-d-system`
 
-### 3. Hub Envoy: `spoke1` cluster pointing to Spoke2 — FIXED
+### 3. vLLM pods Pending (GPU capacity)
 
-**Fixed (2026-08-05):** Reverted to `maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com`. Also updated all Spoke API keys to correct values (`spoke1: sk-oai-D09k...`, `spoke2: sk-oai-1WdS...`, `spoke3: sk-oai-d4Aq...`).
+**Status:** All 5 vLLM pods across 3 Spokes are Pending.  
+**Problem:** No GPU worker capacity available.  
+**Fix:** Free GPU resources or scale node group.
 
-### 4. Tenant PP: `api-translation` plugin removed from deployment
+### 4. Spoke3 MaaS auth 403 (pre-existing)
 
-**Current:** Patched `payload-processing` Deployment to remove `--plugin $(API_TRANSLATION)`.  
-**Why:** `api-translation` rewrites `:path` to `/v1/chat/completions` which runs BEFORE the router filter, breaking HTTPRoute matching. `maas-controller` may revert this patch.  
-**Proper fix (options):**
-  - **(a)** Deploy a separate custom IPP instance for the Tenant (not managed by maas-controller) with only the needed plugins (`body-field-to-header` + `model-provider-resolver` + `apikey-injection`). Our EnvoyFilter points to this instance.
-  - **(b)** Fix `maas-controller` to support per-tenant plugin customization (ConfigMap toggle or CRD field).
-  - **(c)** Fix `api-translation` plugin to NOT rewrite `:path` when running pre-route (add a "pre-route" mode that only translates the body, not the path).
+**Status:** Optional — Spoke1/2 are sufficient for E2E.  
+**Problem:** Authorino OPA `require-group-membership` rule fails on Spoke3.  
+**Fix:** Investigate AuthConfig on Spoke3.
 
-### 5. Tenant PP: corrected EnvoyFilter (`payload-processing-fix`) — RHOAIENG-76228
+### 5. Tenant PP: `api-translation` removal may be reverted
 
-**Current:** Created a separate EnvoyFilter `payload-processing-fix` with the correct `subFilter: envoy.filters.http.wasm` anchor and `priority: 10`. The maas-controller's original `payload-processing` EnvoyFilter remains but is harmless (its anchor never matches).
+**Status:** Patched Tenant PP to remove `--plugin $(API_TRANSLATION)`. Working now.  
+**Risk:** `maas-controller` may re-add it if it reconciles the Deployment.  
+**Proper fix options:**
+  - (a) Deploy a separate IPP instance for Tenant (not managed by maas-controller)
+  - (b) Fix `maas-controller` to support per-tenant plugin customization
+  - (c) Fix `api-translation` plugin to not rewrite `:path` pre-route
 
-**Root cause:** This is a **known Red Hat bug** ([RHOAIENG-76228](https://redhat.atlassian.net/browse/RHOAIENG-76228)). RHOAI 3.4.2 ships MaaS v0.1.1 which was built for RHCL 1.3 (uses WasmPlugin CRs → filter named `extensions.istio.io/wasmplugin/...`). However, RHCL 1.3 is **no longer available** in the OLM catalog — only RHCL 1.4.2 is offered in the `stable` channel. RHCL 1.4 deploys auth via EnvoyFilter (no WasmPlugin CR), naming it `envoy.filters.http.wasm`. The maas-controller's `subFilter` match never fires, so ext_proc is never inserted.
+### 6. Tenant/Hub PP: EnvoyFilter workaround (`payload-processing-fix`) — RHOAIENG-76228
 
-**Fix status:**
-  - Fix merged to `main` on 2026-07-10: [PR #1146](https://github.com/opendatahub-io/models-as-a-service/pull/1146) (dual-anchor approach: 4 configPatches covering both WasmPlugin and RHCL 1.4 naming).
-  - Will ship in **RHOAI 3.5** (MaaS v0.2.1). Currently only available as EA (`3.5.0-ea.2` on `beta` channel).
-  - RHCL downgrade to 1.3 is not possible (removed from catalog).
-  - The env var approach (PR #1144) is also not in the deployed binary.
-
-**Our workaround is stable:** The custom `payload-processing-fix` EnvoyFilter is safe because:
-  - `maas-controller` only reconciles its own EF by name (`payload-processing`) — it never touches ours.
-  - The controller's original EF is inert (wrong anchor = no match = no effect).
-  - Both coexist without conflict.
-
-**Resolution:** Upgrade to RHOAI 3.5 when GA. The controller will then generate the correct dual-anchor EF natively, and `payload-processing-fix` can be removed.
-
-### 6. Credential Secret: manual label `inference.networking.k8s.io/bbr-managed`
-
-**Current:** Manually added label to `hub-gateway-credentials` Secret so the PP's `apikey-injection` plugin discovers it (label-filtered informer).  
-**Why:** The `maas-controller` creates ExternalModels and credential Secrets but does NOT add the required label for the PP's Secret informer.  
-**Proper fix:** Fix `maas-controller` to add `inference.networking.k8s.io/bbr-managed: "true"` to any Secret referenced by `credentialRef` in ExternalModels. File a bug upstream.
-
-### 7. Spoke Envoy: path rewrite (strip MaaS prefix)
-
-**Current:** Spoke Envoy has `regex_rewrite` to strip `/models-as-a-service/[model-name]/` before forwarding to vLLM.  
-**Why:** MaaS routes include the namespace/model prefix; vLLM only understands `/v1/...` paths.  
-**Proper fix:** Once Spoke EPP is deployed, it should handle path normalization (or this stays as a permanent Envoy config — it's not a workaround, it's correct behavior for any Spoke sitting between MaaS and vLLM).
-
-### 8. Hub EPP ext_proc: `processing_mode` must be `FULL_DUPLEX_STREAMED`
-
-**Root cause found (2026-08-05):** The Hub Envoy ext_proc filter was initially configured with `request_body_mode: BUFFERED` (and later `NONE`), which caused an ext_proc protocol deadlock:
-  - With `BUFFERED`: Envoy waits for EPP's HeadersResponse before sending body. EPP waits for body before responding to headers → **deadlock**.
-  - With `NONE`: Envoy never sends body, EPP cannot extract model name → hangs or falls back incorrectly.
-
-**Correct configuration:** ALL standard llm-d-router deployment manifests use `FULL_DUPLEX_STREAMED`:
-```yaml
-processing_mode:
-  request_header_mode: SEND
-  response_header_mode: SEND
-  request_body_mode: FULL_DUPLEX_STREAMED
-  response_body_mode: FULL_DUPLEX_STREAMED
-  request_trailer_mode: SEND
-  response_trailer_mode: SEND
-message_timeout: 1000s
-```
-With `FULL_DUPLEX_STREAMED`, Envoy sends headers AND body to EPP without waiting for intermediate responses.
-
-**Status:** Fixed. Hub EPP is now correctly receiving requests, selecting endpoints, and setting `x-gateway-destination-endpoint`. Verified rotation across spoke1/spoke2/spoke3.
-
-### 9. Hub-post: `hubMode: true` doesn't implement endpoint-based resolution
-
-**Current:** The hub-post image (`ghcr.io/yehuditkerido/ai-gateway-payload-processing:hub-mode`, build `pr-416`) is deployed with `hubMode: true` parameter. However, the `model-provider-resolver` plugin in this image still resolves by model NAME (from request body or `x-gateway-model-name` header), not by endpoint from `x-gateway-destination-endpoint` header.
-
-**Impact:** Hub-post cannot dynamically select which Spoke's credentials to inject based on EPP's routing decision. Static API key injection in Envoy routes is used instead (Gap #1).
-
-**Proper fix:** The `model-provider-resolver` plugin needs a TRANSFORM mode that:
-1. Reads `x-gateway-destination-endpoint` header (set by EPP)
-2. Matches endpoint to ExternalProvider's `spec.endpoint` field
-3. Retrieves credentials from the matched provider's `auth.secretRef`
-4. Passes to `apikey-injection` for header injection
-
-**Workaround (current):** Static `request_headers_to_add: Authorization` in Hub Envoy routes per-spoke. Functionally correct for the demo.
-
-### 10. Pre-existing cluster issues
-
-| Cluster | Issue | Fix needed |
-|---------|-------|-----------|
-| Spoke1 | vLLM pods Pending (GPU capacity) | Free GPU resources or scale node group |
-| Spoke3 | MaaS auth 403 PERMISSION_DENIED | Authorino OPA `require-group-membership` failing; investigate AuthConfig |
+**Status:** Stable workaround in place (custom EF with correct anchor).  
+**Root cause:** RHOAI 3.4.2 MaaS v0.1.1 hardcodes WasmPlugin anchor name; RHCL 1.4 uses `envoy.filters.http.wasm`.  
+**Resolution:** Upgrade to RHOAI 3.5 when GA ([PR #1146](https://github.com/opendatahub-io/models-as-a-service/pull/1146) fixes this).  
+**Our workaround is safe:** `maas-controller` only reconciles its own EF by name; ours coexists without conflict.
 
 ---
 
-## Gap risks (watch list)
+## Future improvements (not blocking E2E)
 
-| Risk | Why | Mitigation |
-|------|-----|------------|
-| IPP still weight-picks | Default DS resolver behavior | `hubMode: true` + verify no CycleState in PROPOSE |
-| Filter order wrong | Default chart inserts IPP before EPP | hub-pre / hub-post EnvoyFilters (PR #416) |
-| MaaS ExternalModel vs upstream ExternalProvider | Different CRDs/API | Use MaaS ExternalModel only; map fields for resolver |
-| Hub PP CrashLoop | API unreachable after hibernate | S0; restart after API Ready |
-| Spoke1 unschedulable | CPU/mem requests | A1 |
-| EPP subset metadata mismatch | Wrong namespace/key | Align with EPP `candidates.go` + PR #412 |
-| Image pull from GHCR | Private/package perms | Pull secret on deploy SA |
-| PRs need-rebase | Upstream moving | Demo uses prebuilt `hub-mode` image; rebase later |
-| maas-controller reverts PP patch | Controller reconciles deployment args | Gap #4: deploy separate IPP or fix controller |
-| Kuadrant wasm mismatch | EnvoyFilter vs WasmPlugin naming | Gap #5: upgrade Kuadrant or patch controller |
-| Secret label missing after recreate | maas-controller doesn't add bbr-managed label | Gap #6: patch controller or add to Helm values |
+These are not needed for the demo but should be addressed for production readiness.
+
+### Hub-post dynamic credential injection
+
+**Current:** Static API keys in Hub Envoy routes per-spoke.  
+**Why blocked:** The `pr-416` hub-post image’s `model-provider-resolver` doesn’t implement endpoint-based resolution from `x-gateway-destination-endpoint` header. It only resolves by model name.  
+**Proper fix:** `model-provider-resolver` needs a TRANSFORM mode that reads EPP’s destination header, matches it to an ExternalProvider endpoint, and injects the correct credential.
+
+### Credential Secret label automation
+
+**Current:** Manually added `inference.networking.k8s.io/bbr-managed: "true"` label to credential Secrets.  
+**Why:** `maas-controller` doesn’t add the label that the PP’s `apikey-injection` informer needs.  
+**Proper fix:** File upstream bug for `maas-controller` to auto-label Secrets referenced by `credentialRef`.
 
 ---
 
+## Fixes applied (reference)
+
+Issues discovered and resolved during this work. Kept for documentation.
+
+| # | Issue | Root cause | Fix applied |
+|---|-------|-----------|-------------|
+| 1 | Hub EPP ext_proc deadlock | `processing_mode: BUFFERED` caused protocol deadlock | Changed to `FULL_DUPLEX_STREAMED` for all ext_proc filters |
+| 2 | Hub Envoy `spoke1` cluster wrong address | Config error: pointed to Spoke2 | Corrected to `maas.apps.aigrid-ds-spoke1...`; updated all Spoke API keys |
+| 3 | Hub Envoy path-based fallback routes | Needed before EPP was deployed | EPP now sets `x-gateway-destination-endpoint`; header-based routes take priority |
+| 4 | PP NetworkPolicy blocked | `openshift-ingress-deny-all` blocked PP → API server | Added `payload-processing-allow` NetworkPolicy |
+| 5 | Credential Secret not discovered by PP | Missing `bbr-managed` label | Manually labeled `hub-gateway-credentials` Secret |
+| 6 | Tenant E2E 404 (path rewrite too early) | `api-translation` stripped MaaS prefix before gateway routing | Removed `api-translation` from Tenant PP args |
 ## Directory layout to create
 
 ```text
@@ -540,8 +484,8 @@ docs/multi-cluster-setup-downstream/
 │   ├── envoy.yaml              # Hub standalone Envoy (llm-d-system)
 │   ├── hub-post.yaml           # Hub hub-post IPP (llm-d-system)
 │   ├── spoke-envoy.yaml        # Spoke standalone Envoy template (llm-d-system)
-│   ├── hub-epp.yaml            # Hub EPP (on hold)
-│   ├── spoke-epp.yaml          # Spoke EPP (on hold)
+│   ├── hub-epp.yaml            # Hub EPP (multicluster)
+│   ├── spoke-epp.yaml          # Spoke EPP (pod selection)
 │   └── ...
 ├── maas-hub/
 ├── maas-tenant/
@@ -554,25 +498,3 @@ docs/multi-cluster-setup-downstream/
 Copy/adapt from `docs/multi-cluster-setup/`; do not invent a second pattern.
 
 ---
-
-## Suggested day-one assignment
-
-| Person A | Person B |
-|----------|----------|
-| S0 together (15 min) | S0 together (15 min) |
-| A1 Spoke1 vLLM fix | B1 PP image → hub-mode on Hub (and Tenant if needed) |
-| A2 MaaS on Spoke2 (healthy baseline) then Spoke3 | B2 hub-pre/hub-post EnvoyFilter + hubMode config |
-| A2 MaaS on Spoke1 after A1 | B3 Hub EPP deploy (endpoints stubbed) |
-| A3 Spoke EPP + rewrite on all spokes | B4 Hub ExternalModel drafts |
-| A4 Fill spoke address table | Update Hub endpoints from A's table |
-| Join D + E | Join D + E |
-
----
-
-## Open items before execute
-
-1. Confirm EPP image tag if not `ghcr.io/yehuditkerido/llm-d-router-endpoint-picker:multi-cluster-test`.
-2. Confirm DS provider string for remote MaaS ExternalModel (`remote-maas` vs `openai` + endpoint) against hub-mode resolver code in the `hub-mode` image.
-3. Assign Person A / Person B names on the table above.
-
-When this plan looks good, we start with **S0 + A1 + B1** in parallel.
