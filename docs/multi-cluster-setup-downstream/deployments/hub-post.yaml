@@ -118,12 +118,25 @@ rules:
   - apiGroups: ["inference.opendatahub.io"]
     resources: ["externalmodels", "externalproviders"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["inference.opendatahub.io"]
+    resources: ["externalmodels/status", "externalproviders/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["inference.opendatahub.io"]
+    resources: ["externalmodels/finalizers", "externalproviders/finalizers"]
+    verbs: ["update"]
   - apiGroups: ["maas.opendatahub.io"]
     resources: ["externalmodels"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["secrets", "configmaps"]
-    verbs: ["get", "list", "watch"]
+    resources: ["secrets", "configmaps", "services"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: ["networking.istio.io"]
+    resources: ["serviceentries", "destinationrules"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  # external-model-controller creates/watches HTTPRoutes for ExternalModel status
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

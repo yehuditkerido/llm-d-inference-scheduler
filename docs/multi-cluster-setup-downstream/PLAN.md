@@ -66,7 +66,7 @@ SPOKE (1/2/3) — GW2: Standalone Envoy (llm-d-system)
 |  | MaaS PP (GW1) | ✅ Stock full chain, controller-managed |
 |  | Standalone Envoy (GW2) | ✅ EPP + static spoke keys |
 |  | Hub EPP | ✅ Multicluster plugins, picks spokes, `FULL_DUPLEX_STREAMED` |
-|  | stub-metrics | ⚠️ Temporary dummy metrics — replace with real Spoke EPP metrics routes (see item #4) |
+|  | Hub EPP metrics | ✅ Scrapes real Spoke EPP via mTLS (passthrough routes); `stub-metrics` removed |
 | **Spoke1** | MaaS Gateway | ✅ Auth working |
 |  | Standalone Envoy | ✅ EPP ext_proc enabled |
 |  | Spoke EPP | ✅ Running, discovers 2 vLLM pods |
@@ -87,7 +87,7 @@ SPOKE (1/2/3) — GW2: Standalone Envoy (llm-d-system)
 | 1 | **vLLM pods Running** on at least one Spoke | Infrastructure (GPU nodes) | Need GPU capacity |
 | 2 | **Spoke Envoy path rewrite** | Config (2 min per spoke) | Add `regex_rewrite` to strip `/models-as-a-service/<model>/` prefix |
 | 3 | **Spoke3 auth fix** (optional — Spoke1/2 sufficient) | Investigation | Authorino OPA `require-group-membership` rule |
-| 4 | **Expose Spoke EPP metrics + remove stub-metrics** | Config + mTLS route | See details below |
+| 4 | ~~**Expose Spoke EPP metrics + remove stub-metrics**~~ | ✅ DONE | mTLS (passthrough routes + shared CA) |
 
 Once items #1 and #2 are resolved, the full E2E chain will return HTTP 200:
 ```
@@ -96,7 +96,25 @@ Alice → Tenant MaaS (auth) → Tenant PP (Hub key) → Hub MaaS (auth)
   → Spoke Envoy → Spoke EPP (pick pod) → vLLM → 200
 ```
 
-### Item #4: Spoke metrics exposure + stub-metrics removal
+### Item #4: Spoke metrics exposure + stub-metrics removal — ✅ DONE
+
+**Resolved (2026-08-06):** Hub EPP now scrapes real Spoke EPP metrics via mTLS over passthrough OCP Routes.
+
+**Architecture:**
+- `address` = Spoke MaaS FQDN (inference target, goes through MaaS auth with API key)
+- `metricsAddress` = Spoke EPP metrics OCP Route (passthrough TLS, mTLS authenticated)
+
+**What was done:**
+1. Created OCP Route `epp-metrics` on each Spoke (**passthrough** TLS) exposing EPP metrics port 9002
+2. Generated shared CA + Spoke server certs (with SANs) + Hub client cert (`certs/` directory)
+3. Spoke EPPs configured with `--metrics-cert-dir` + `--metrics-client-ca-file` (serve TLS, verify client cert)
+4. Hub EPP config: `caCertPath`, `clientCertPath`, `clientKeyPath` (present client cert, verify server cert against CA)
+5. `injectDefaults: false` in Hub EPP config (prevent auto-injection of HTTP core source)
+6. Deleted `stub-metrics` Deployment + Service from Hub
+
+**Result:** Spoke1/2 Attributes populated (`llm-d.ai/multicluster-kv-cache-utilization`, `llm-d.ai/multicluster-queue-size`). Hub EPP makes load-aware routing decisions.
+
+**Note on `ReadyPods: 0`:** This Prometheus metric remains 0 because `multicluster-metrics-extractor` writes to Attributes (not `Metrics.UpdateTime`). By design: routing uses `AllPodsPredicate` and scoring uses Attributes. Does NOT block request routing.
 
 **Current state:** Hub EPP’s `multicluster-file-discovery` needs to scrape metrics from each Spoke to make intelligent routing decisions (KV-cache utilization, queue depth). Currently, Hub EPP’s `epp-clusters` ConfigMap points all `metricsAddress` entries to a temporary `stub-metrics` pod in `llm-d-system` (Hub) that returns empty Prometheus metrics. This makes EPP treat all Spokes as equal (random rotation).
 
@@ -200,7 +218,11 @@ Manifest: `deployments/spoke-envoy.yaml` (uses `VLLM_SERVICE_PLACEHOLDER` — de
   - Config: `core-metrics-extractor` with vLLM engine specs
 - [x] Envoy ConfigMap: EPP ext_proc (`FULL_DUPLEX_STREAMED`) + EPP cluster enabled on all 3 Spokes ✔
 - [ ] Path rewrite after MaaS: strip `/models-as-a-service/[^/]+/` before EPP/vLLM
-- [ ] Metrics route + mTLS so Hub EPP can scrape `metricsAddress` (same as upstream)
+- [x] Metrics route + mTLS so Hub EPP can scrape `metricsAddress` — DONE (2026-08-06)
+  - Generated shared CA (`certs/ca.crt`), Spoke server certs (`spoke{1,2}-server.{crt,key}`), Hub client cert (`hub-client.{crt,key}`)
+  - Spoke EPPs: `--metrics-cert-dir=/etc/epp-tls`, `--metrics-client-ca-file=/etc/epp-tls/ca.crt` → metrics serve over TLS with client cert verification
+  - Hub EPP config: `caCertPath`, `clientCertPath`, `clientKeyPath` → presents client cert when scraping
+  - OCP Routes switched from `edge` to `passthrough` (TLS goes end-to-end, not terminated at ingress)
 - [ ] Smoke: request via Spoke MaaS key → MaaS → EPP → vLLM (blocked: vLLM Pending on all Spokes)
 
 **Pre-existing issues (not from Envoy deployment):**
@@ -217,19 +239,19 @@ A4 is only the sync table for Person B’s Hub file-discovery + ExternalModels. 
 # Hub cluster-endpoints (file-discovery)
 endpoints:
   - name: spoke1
-    address: maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com          # MaaS auth
+    address: maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com
     port: "443"
-    metricsAddress: inference-gateway-llm-d-system.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com  # mTLS
-    metricsPort: "443"
     labels:
+      metricsAddress: epp-metrics-llm-d-system.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com
+      metricsPort: "443"
       model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
 ```
 
-| Spoke | Model | `address` (MaaS) | `metricsAddress` (mTLS scrape) |
-|-------|-------|------------------|--------------------------------|
-| spoke1 | TinyLlama | `maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com` | `inference-gateway-llm-d-system.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com` |
-| spoke2 | TinyLlama | `maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` | `inference-gateway-llm-d-system.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` |
-| spoke3 | Qwen | `maas.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com` | `inference-gateway-llm-d-system.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com` |
+| Spoke | Model | `address` (MaaS) | `metricsAddress` (EPP metrics route) |
+|-------|-------|------------------|--------------------------------------|
+| spoke1 | TinyLlama | `maas.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com` | `epp-metrics-llm-d-system.apps.aigrid-ds-spoke1.aigriddev.sysdeseng.com` |
+| spoke2 | TinyLlama | `maas.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` | `epp-metrics-llm-d-system.apps.aigrid-ds-spoke2.aigriddev.sysdeseng.com` |
+| spoke3 | Qwen | `maas.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com` | `epp-metrics-llm-d-system.apps.aigrid-ds-spoke3.aigriddev.sysdeseng.com` |
 
 - [x] Confirmed both FQDNs per spoke (MaaS + metrics stub)
 - [x] Spoke API keys configured in Hub Envoy routes
@@ -293,7 +315,7 @@ Deploy a **separate standalone Envoy** (`envoy`) in the `llm-d-system` namespace
 **Status (2026-08-05):** Hub EPP is deployed and functional. Root cause of ext_proc hang was incorrect `processing_mode` — must use `FULL_DUPLEX_STREAMED` (see Gap #8).
 
 - [x] Deploy Hub EPP image with Sam's multicluster plugins (`multicluster-file-discovery`, `multicluster-metrics-*`, scorers)
-- [x] Configure `clusters.yaml` with Spoke endpoints (using `stub-metrics` for metrics)
+- [x] Configure `clusters.yaml` with Spoke endpoints (real EPP metrics routes via `metricsAddress` labels)
 - [x] Wire EPP ext_proc on Hub Envoy with correct `FULL_DUPLEX_STREAMED` processing mode
 - [x] Verify EPP picks endpoints and sets `x-gateway-destination-endpoint` (rotation across spokes confirmed)
 - [x] Hub Envoy routes inject correct Spoke API keys per-route (static injection; see Gap #1)
@@ -402,9 +424,9 @@ These must be resolved before the E2E returns HTTP 200 or before the demo is pro
 **Problem:** MaaS routes requests to Spoke Envoy with path `/models-as-a-service/<model>/v1/chat/completions`. vLLM only understands `/v1/...`.  
 **Fix:** Add `regex_rewrite` to Spoke Envoy route config to strip the `/models-as-a-service/[^/]+/` prefix. 2 min per Spoke.
 
-### 2. Spoke EPP metrics not exposed (stub-metrics in use)
+### ~~2. Spoke EPP metrics not exposed (stub-metrics in use)~~ RESOLVED (2026-08-06)
 
-**Status:** Hub EPP scrapes a dummy `stub-metrics` pod instead of real Spoke EPP metrics.  
+**Status:** RESOLVED. See Item #4 above. mTLS
 **Problem:** Without real metrics, Hub EPP can’t make load-aware decisions (KV-cache, queue depth). It just round-robins.  
 **Fix:**
 1. Create OpenShift Route per Spoke exposing EPP metrics (port 9002)
